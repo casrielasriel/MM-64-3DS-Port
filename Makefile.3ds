@@ -166,6 +166,10 @@ HOT_OBJS := $(BUILD)/port/src/gfx/gfx_pc.o $(BUILD)/port/src/gfx3ds/gfx_citro3d.
             $(BUILD)/port/src/gfx3ds/gfx_3ds.o $(BUILD)/port/src/audio_microcode.o $(BUILD)/port/src/gfx3ds/c3d_fast.o
 $(HOT_OBJS): CC_FLAGS += -O3 -ffast-math
 
+$(BUILD)/src/code/z_fbdemo_fade.o: PORT_COLOR_SETTER := TransitionFade_SetColor
+$(BUILD)/src/code/z_fbdemo_circle.o: PORT_COLOR_SETTER := TransitionCircle_SetColor
+$(BUILD)/src/overlays/fbdemos/ovl_fbdemo_wipe1/z_fbdemo_wipe1.o: PORT_COLOR_SETTER := TransitionWipe1_SetColor
+
 # gSequenceFontTable is game data: generated from your own ROM's N64 build, never committed
 port/src_gen/sequence_font_table_data.c: build/$(VERSION)/assets/audio/sequence_font_table.o tools/port/gen_sequence_font_table.py
 	python3 tools/port/gen_sequence_font_table.py
@@ -173,6 +177,7 @@ port/src_gen/sequence_font_table_data.c: build/$(VERSION)/assets/audio/sequence_
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	@$(CC) $(CC_FLAGS) -MMD -MP -c -o $@ $< || (echo "FAIL: $<" && false)
+	@$(if $(PORT_COLOR_SETTER),$(OBJCOPY) --weaken-symbol=$(PORT_COLOR_SETTER) $@,:)
 	@# overlay objects: own .data/.bss sections so overlay_statics.c can reset them on (re)load, like N64
 	@case "$@" in $(BUILD)/src/overlays/*/ovl_*/*) ovl=$$(basename $$(dirname $@)); \
 		$(OBJCOPY) --rename-section .data=ovld_$$ovl --rename-section .bss=ovlb_$$ovl $@ ;; esac

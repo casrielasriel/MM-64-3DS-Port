@@ -14,6 +14,7 @@
 #include "PR/os_voice.h"
 #include "PR/gs2dex.h"
 #include "variables.h"
+#include "z64transition.h"
 
 
 /* usleep: the C library's (declared by libc64/sleep.h with MM's prototype) */
@@ -83,3 +84,30 @@ u64 gspS2DEX2_fifoTextStart[1], gspS2DEX2_fifoTextEnd[1];
 u64 gspS2DEX2_fifoDataStart[1], gspS2DEX2_fifoDataEnd[1];
 
 unsigned gPortDbgRealloc[4]; /* (bring-up: game.c GameState_Realloc failure numbers) */
+
+void TransitionFade_SetColor(void* thisx, u32 color) {
+    TransitionFade* this = (TransitionFade*)thisx;
+
+    this->color.r = color >> 24;
+    this->color.g = (color >> 16) & 0xFF;
+    this->color.b = (color >> 8) & 0xFF;
+    this->color.a = color & 0xFF;
+}
+
+void TransitionCircle_SetColor(void* thisx, u32 color) {
+    TransitionCircle* this = (TransitionCircle*)thisx;
+
+    this->color.r = color >> 24;
+    this->color.g = (color >> 16) & 0xFF;
+    this->color.b = (color >> 8) & 0xFF;
+    this->color.a = color & 0xFF;
+}
+
+void TransitionWipe1_SetColor(void* thisx, u32 color) {
+    TransitionWipe1* this = (TransitionWipe1*)thisx;
+
+    this->primColor.r = color >> 24;
+    this->primColor.g = (color >> 16) & 0xFF;
+    this->primColor.b = (color >> 8) & 0xFF;
+    this->primColor.a = color & 0xFF;
+}
