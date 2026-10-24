@@ -4,6 +4,18 @@
 #include "command_macros_base.h"
 #include "z64cutscene.h"
 
+#ifdef __3DS__
+#define CS_PACK_HH(a, b) (_SHIFTL(a, 0, 16) | _SHIFTL(b, 16, 16))
+#define CS_PACK_BBH(a, b, c) (_SHIFTL(a, 0, 8) | _SHIFTL(b, 8, 8) | _SHIFTL(c, 16, 16))
+#define CS_PACK_HBB(a, b, c) (_SHIFTL(a, 0, 16) | _SHIFTL(b, 16, 8) | _SHIFTL(c, 24, 8))
+#define CS_PACK_BBBB(a, b, c, d) (_SHIFTL(a, 0, 8) | _SHIFTL(b, 8, 8) | _SHIFTL(c, 16, 8) | _SHIFTL(d, 24, 8))
+#else
+#define CS_PACK_HH(a, b) CMD_HH(a, b)
+#define CS_PACK_BBH(a, b, c) CMD_BBH(a, b, c)
+#define CS_PACK_HBB(a, b, c) CMD_HBB(a, b, c)
+#define CS_PACK_BBBB(a, b, c, d) CMD_BBBB(a, b, c, d)
+#endif
+
 /**
  * Cutscene scripts are arrays of `CutsceneData` words, including bit-packed integers and floats.
  *
@@ -64,7 +76,7 @@
  *   size = 0xC
  */
 #define CS_TEXT(textId, startFrame, endFrame, type, topOptionBranch, bottomOptionBranch) \
-    { CMD_HH(textId, startFrame) }, { CMD_HH(endFrame, type) }, { CMD_HH(topOptionBranch, bottomOptionBranch) }
+    { CS_PACK_HH(textId, startFrame) }, { CS_PACK_HH(endFrame, type) }, { CS_PACK_HH(topOptionBranch, bottomOptionBranch) }
 
 /**
  * ARGS
@@ -160,7 +172,7 @@
  *   size = 0x8
  */
 #define CS_CAM_SPLINE(numEntries, unused0, unused1, duration) \
-    { CMD_HH(numEntries, unused0) }, { CMD_HH(unused1, duration) }
+    { CS_PACK_HH(numEntries, unused0) }, { CS_PACK_HH(unused1, duration) }
 
 /**
  * ARGS
@@ -170,7 +182,7 @@
  *   size = 0xC
  */
 #define CS_CAM_POINT(interpType, weight, duration, posX, posY, posZ, relativeTo) \
-    { CMD_BBH(interpType, weight, duration) }, { CMD_HH(posX, posY) }, { CMD_HH(posZ, relativeTo) }
+    { CS_PACK_BBH(interpType, weight, duration) }, { CS_PACK_HH(posX, posY) }, { CS_PACK_HH(posZ, relativeTo) }
 
 /**
  * ARGS
@@ -181,10 +193,10 @@
  *   size = 0x8
  */
 #define CS_CAM_MISC(unused0, roll, fov, unused1) \
-    { CMD_HH(unused0, roll) }, { CMD_HH(fov, unused1) }
+    { CS_PACK_HH(unused0, roll) }, { CS_PACK_HH(fov, unused1) }
 
 // First half-word is read from as `numEntries` in `CS_CAM_SPLINE()`
-#define CS_CAM_END() { CMD_HH(0xFFFF, 4) }
+#define CS_CAM_END() { CS_PACK_HH(0xFFFF, 4) }
 
 
 /**
@@ -212,7 +224,7 @@
  *   size = 0x8
  */
 #define CS_MISC(type, startFrame, endFrame, unused0) \
-    { CMD_HH(type, startFrame) }, { CMD_HH(endFrame, unused0) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HH(endFrame, unused0) }
 
 
 /**
@@ -238,7 +250,7 @@
  *   size = 0x8
  */
 #define CS_LIGHT_SETTING(lightSetting, startFrame, endFrame) \
-    { CMD_BBH(0, (lightSetting + 1), startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH((lightSetting + 1) & 0xFF, startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -259,7 +271,7 @@
  *   size = 0x8
  */
 #define CS_TRANSITION(type, startFrame, endFrame) \
-    { CMD_HH(type, startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -280,7 +292,7 @@
  *   size = 0x8
  */
 #define CS_MOTION_BLUR(type, startFrame, endFrame) \
-    { CMD_HH(type, startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -301,7 +313,7 @@
  *   size = 0x8
  */
 #define CS_GIVE_TATL(giveTatl, startFrame, endFrame) \
-    { CMD_HH(giveTatl, startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH(giveTatl, startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -323,7 +335,7 @@
  *   size = 0xC
  */
 #define CS_TRANSITION_GENERAL(type, startFrame, endFrame, red, green, blue) \
-    { CMD_HH(type, startFrame) }, { CMD_HBB(endFrame, red, green) }, { CMD_BBBB(blue, 0, 0, 0) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HBB(endFrame, red, green) }, { CS_PACK_BBBB(blue, 0, 0, 0) }
 
 
 /**
@@ -350,7 +362,7 @@
  *   size = 0xC
  */
 #define CS_TIME(unused0, startFrame, endFrame, hour, min) \
-    { CMD_HH(unused0, startFrame) }, { CMD_HBB(endFrame, hour, min) }, { CMD_W(0) }
+    { CS_PACK_HH(unused0, startFrame) }, { CS_PACK_HBB(endFrame, hour, min) }, { CMD_W(0) }
 
 
 /**
@@ -380,7 +392,7 @@
  *   size = 0x30
  */
 #define CS_ACTOR_CUE(id, startFrame, endFrame, rotX, rotY, rotZ, startX, startY, startZ, endX, endY, endZ, normX, normY, normZ) \
-    { CMD_HH(id, startFrame) }, { CMD_HH(endFrame, rotX) }, { CMD_HH(rotY, rotZ) }, \
+    { CS_PACK_HH(id, startFrame) }, { CS_PACK_HH(endFrame, rotX) }, { CS_PACK_HH(rotY, rotZ) }, \
     { CMD_W(startX) }, { CMD_W(startY) }, { CMD_W(startZ) }, \
     { CMD_W(endX) }, { CMD_W(endY) }, { CMD_W(endZ) }, \
     { CMD_F(normX) }, { CMD_F(normY) }, { CMD_F(normZ) }
@@ -438,7 +450,7 @@
  *   size = 0x8
  */
 #define CS_START_SEQ(seqId, startFrame, endFrame) \
-    { CMD_HH((seqId + 1), startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH((seqId + 1), startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -463,7 +475,7 @@
  *   size = 0x8
  */
 #define CS_STOP_SEQ(seqId, startFrame, endFrame, unk_06) \
-    { CMD_HH((seqId + 1), startFrame) }, { CMD_HH(endFrame, unk_06) }
+    { CS_PACK_HH((seqId + 1), startFrame) }, { CS_PACK_HH(endFrame, unk_06) }
 
 
 /**
@@ -490,7 +502,7 @@
  *   size = 0xC
  */
 #define CS_FADE_OUT_SEQ(seqPlayer, startFrame, endFrame) \
-    { CMD_HH(seqPlayer, startFrame) }, { CMD_HH(endFrame, 0) }, { CMD_W(0) }
+    { CS_PACK_HH(seqPlayer, startFrame) }, { CS_PACK_HH(endFrame, 0) }, { CMD_W(0) }
 
 
 /**
@@ -511,7 +523,7 @@
  *   size = 0x8
  */
 #define CS_START_AMBIENCE(unused0, startFrame, endFrame) \
-    { CMD_HH(unused0, startFrame) }, { CMD_HH(endFrame, 0) }
+    { CS_PACK_HH(unused0, startFrame) }, { CS_PACK_HH(endFrame, 0) }
 
 
 /**
@@ -532,7 +544,7 @@
  *   size = 0x8
  */
 #define CS_FADE_OUT_AMBIENCE(unused0, startFrame, endFrame) \
-    { CMD_HH(unused0, startFrame) }, { CMD_HH(endFrame, 0) }
+    { CS_PACK_HH(unused0, startFrame) }, { CS_PACK_HH(endFrame, 0) }
 
 
 /**
@@ -553,7 +565,7 @@
  *   size = 0x8
  */
 #define CS_MODIFY_SEQ(type, startFrame, endFrame) \
-    { CMD_HH(type, startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -574,7 +586,7 @@
  *   size = 0x30
  */
 #define CS_SFX_REVERB_INDEX_2(unused0, startFrame, endFrame) \
-    { CMD_HH(unused0, startFrame) }, { CMD_HH(endFrame, 0) }
+    { CS_PACK_HH(unused0, startFrame) }, { CS_PACK_HH(endFrame, 0) }
 
 
 /**
@@ -595,7 +607,7 @@
  *   size = 0x8
  */
 #define CS_SFX_REVERB_INDEX_1(unused0, startFrame, endFrame) \
-    { CMD_HH(unused0, startFrame) }, { CMD_HH(endFrame, 0) }
+    { CS_PACK_HH(unused0, startFrame) }, { CS_PACK_HH(endFrame, 0) }
 
 
 /**
@@ -620,7 +632,7 @@
  *   size = 0x8
  */
 #define CS_DESTINATION(type, startFrame, endFrame) \
-    { CMD_HH(type, startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -641,7 +653,7 @@
  *   size = 0x8
  */
 #define CS_CHOOSE_CREDITS_SCENES(type, startFrame, endFrame) \
-    { CMD_HH(type, startFrame) }, { CMD_HH(endFrame, endFrame) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HH(endFrame, endFrame) }
 
 
 /**
@@ -662,7 +674,7 @@
  *   size = 0x8
  */
 #define CS_RUMBLE(type, startFrame, endFrame, intensity, decayTimer, decayStep) \
-    { CMD_HH(type, startFrame) }, { CMD_HBB(endFrame, intensity, decayTimer) }, { CMD_BBBB(decayStep, 0, 0, 0) }
+    { CS_PACK_HH(type, startFrame) }, { CS_PACK_HBB(endFrame, intensity, decayTimer) }, { CS_PACK_BBBB(decayStep, 0, 0, 0) }
 
 
 /**
@@ -683,7 +695,7 @@
  *   size = 0x8
  */
 #define CS_UNK_DATA(unused0, startFrame, endFrame, unk_06) \
-    { CMD_HH(unused0, startFrame) }, { CMD_HH(endFrame, unk_06) }
+    { CS_PACK_HH(unused0, startFrame) }, { CS_PACK_HH(endFrame, unk_06) }
 
 
 /**
