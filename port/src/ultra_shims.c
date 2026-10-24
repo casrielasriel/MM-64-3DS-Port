@@ -184,13 +184,12 @@ void osViSetEvent(OSMesgQueue* mq, OSMesg msg, u32 retraceCount) {
 void osCreateViManager(OSPri pri) { (void)pri; }
 
 /* ------------------------------------------------------------------ */
-/* Controller — zeroed pad until the input backend lands               */
+/* Controller — one native controller on port 1                       */
 
 s32 osContInit(OSMesgQueue* mq, u8* bitpattern, OSContStatus* status) {
     (void)mq;
     *bitpattern = 1; /* controller 1 present */
-    memset(status, 0, 4 * sizeof(OSContStatus));
-    status[0].type = CONT_TYPE_NORMAL;
+    osContGetQuery(status);
     return 0;
 }
 s32 osContStartReadData(OSMesgQueue* mq) { PortShim_RaiseEvent(OS_EVENT_SI); (void)mq; return 0; }
@@ -200,27 +199,40 @@ extern unsigned short PortInput_GetPad(signed char* outX, signed char* outY);
 
 void osContGetReadData(OSContPad* pad) {
     signed char sx = 0, sy = 0;
+    s32 i;
     memset(pad, 0, 4 * sizeof(OSContPad));
     pad[0].button = PortInput_GetPad(&sx, &sy);
     pad[0].stick_x = sx;
     pad[0].stick_y = sy;
+    for (i = 1; i < MAXCONTROLLERS; i++) {
+        pad[i].errno = CHNL_ERR_NORESP >> 4;
+    }
 }
 s32 osContStartQuery(OSMesgQueue* mq) { (void)mq; return 0; }
-void osContGetQuery(OSContStatus* status) { memset(status, 0, 4 * sizeof(OSContStatus)); }
+void osContGetQuery(OSContStatus* status) {
+    s32 i;
+    memset(status, 0, 4 * sizeof(OSContStatus));
+    status[0].type = CONT_TYPE_NORMAL;
+    for (i = 1; i < MAXCONTROLLERS; i++) {
+        status[i].errno = CHNL_ERR_NORESP >> 4;
+    }
+}
 s32 osContSetCh(u8 ch) { (void)ch; return 0; }
 
 /* Pump the game's PadMgr from live 3DS buttons once per frame. Normally a
  * dedicated controller thread runs PadMgr_HandleRetrace on each VI retrace, but
  * in the synchronous model that thread never executes, so gPadMgr.inputs[] stays
- * zero and the game ignores input. We drive it cooperatively here. We call the
- * two inner steps directly rather than PadMgr_HandleRetrace: the latter's
- * osContGetQuery path would zero validCtrlrsMask and mark controller 1 absent.
+ * zero and the game ignores input. MM also requires UpdateConnections before
+ * UpdateInputs: an unregistered controller's readings are discarded.
  * Called from PortGfx_RunTask (3ds_main.c) after the hardware poll. */
 #include "padmgr.h"
-extern void PadMgr_UpdateInputs(PadMgr* padMgr); /* global in padmgr.c, not in the header */
+extern void PadMgr_UpdateConnections(void); /* global in padmgr.c, not in the header */
+extern void PadMgr_UpdateInputs(void);
 void Port3ds_PumpInput(void) {
     osContGetReadData(gPadMgr.pads); /* pads[0] <- live 3DS buttons via the shim above */
-    PadMgr_UpdateInputs(&gPadMgr);   /* fills inputs[] incl. press/release edges */
+    osContGetQuery(gPadMgr.padStatus);
+    PadMgr_UpdateConnections();
+    PadMgr_UpdateInputs(); /* fills inputs[] incl. press/release edges */
 }
 
 /* Pump the audio driver once per frame. AudioMgr_ThreadEntry never runs
