@@ -1784,10 +1784,8 @@ void gfx_replay_positions(int k, bool z_is_from_0_to_1) {
 static void gfx_sp_matrix(uint8_t parameters, const int32_t *addr) {
     float matrix[4][4];
 #ifndef GBI_FLOATS
-    /* PORT: OoT (Matrix_MtxFToMtx) stores the Mtx as 16 int16 integer parts
-       (halfwords 0..15) followed by 16 uint16 fractional parts (halfwords
-       16..31). Read each 16-bit half individually so host endianness is
-       irrelevant (reading them as int32 pairs flips the halves on LE). */
+    /* matrices use guMtxF2L's word-packed layout: integer pairs, then fractional pairs
+     * the game-side converters must use the same layout on the little-endian 3ds */
     {
         const int16_t *ip = (const int16_t *)addr;
         const uint16_t *fp = (const uint16_t *)addr + 16;

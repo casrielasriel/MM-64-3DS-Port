@@ -52,6 +52,13 @@
 #include "su_mtx.h"
 #include "z64math.h"
 
+// halfword accesses must agree with the packed word writes below
+#ifdef __3DS__
+#define MTX_HALF_COLUMN(column) ((column) ^ 1)
+#else
+#define MTX_HALF_COLUMN(column) (column)
+#endif
+
 /**
  * Constructs a matrix \$f ST \$f, i.e. a scaling \$f S \$f followed by a translation \$f T \$f.
  *
@@ -92,7 +99,7 @@ void Mtx_SetTranslateScaleMtx(Mtx* mtx, f32 scaleX, f32 scaleY, f32 scaleZ, f32 
                                                           //
     fixedPoint = scaleX * 0x10000;                        //
     mtx->m[0][0] = fixedPoint;                            // [i00, i01] == [scaleX.i, scaleX.f]; i01 is now "dirty"
-    mu->intPart[0][1] = 0;                                // Clean i01 by zeroing it: [i00, i01] == [scaleX.i, 0]
+    mu->intPart[0][MTX_HALF_COLUMN(1)] = 0;               // Clean i01 by zeroing it: [i00, i01] == [scaleX.i, 0]
     mtx->m[2][0] = (u32)fixedPoint << 16;                 // [f00, f01] == [scaleX.f, 0]
                                                           //
     fixedPoint = scaleY * 0x10000;                        //
@@ -101,22 +108,22 @@ void Mtx_SetTranslateScaleMtx(Mtx* mtx, f32 scaleX, f32 scaleY, f32 scaleZ, f32 
                                                           //
     fixedPoint = scaleZ * 0x10000;                        //
     mtx->m[1][1] = fixedPoint;                            // [i22, i23] == [scaleZ.i, scaleZ.f]
-    mu->intPart[2][3] = 0;                                // [i22, i23] == [scaleZ.i, 0]
+    mu->intPart[2][MTX_HALF_COLUMN(3)] = 0;               // [i22, i23] == [scaleZ.i, 0]
     mtx->m[3][1] = (u32)fixedPoint << 16;                 // [f22, f23] == [scaleZ.f, 0]
                                                           //
     mtx->m[3][0] = 0;                                     // [f20, f21] == [0, 0]
                                                           //
     fixedPoint = translateX * 0x10000;                    //
-    mu->intPart[3][0] = ((u32)fixedPoint >> 16) & 0xFFFF; // [i30, i31] == [translateX.i, ?]
-    mu->fracPart[3][0] = fixedPoint & 0xFFFF;             // [f30, f31] == [translateX.f, ?]
+    mu->intPart[3][MTX_HALF_COLUMN(0)] = ((u32)fixedPoint >> 16) & 0xFFFF; // [i30, i31] == [translateX.i, ?]
+    mu->fracPart[3][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF;             // [f30, f31] == [translateX.f, ?]
                                                           //
     fixedPoint = translateY * 0x10000;                    //
-    mu->intPart[3][1] = ((u32)fixedPoint >> 16) & 0xFFFF; // [i30, i31] == [translateX.i, translateY.i]
-    mu->fracPart[3][1] = fixedPoint & 0xFFFF;             // [f30, f31] == [translateX.f, translateY.f]
+    mu->intPart[3][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 16) & 0xFFFF; // [i30, i31] == [translateX.i, translateY.i]
+    mu->fracPart[3][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;             // [f30, f31] == [translateX.f, translateY.f]
                                                           //
     fixedPoint = translateZ * 0x10000;                    //
-    mu->intPart[3][2] = ((u32)fixedPoint >> 16) & 0xFFFF; // [i30, i31] == [translateZ.i, ?]
-    mu->intPart[3][3] = 1;                                // [i32, i33] == [translateZ.i, 1]
+    mu->intPart[3][MTX_HALF_COLUMN(2)] = ((u32)fixedPoint >> 16) & 0xFFFF; // [i30, i31] == [translateZ.i, ?]
+    mu->intPart[3][MTX_HALF_COLUMN(3)] = 1;               // [i32, i33] == [translateZ.i, 1]
     mtx->m[3][3] = (u32)fixedPoint << 16;                 // [f32, f33] == [translateZ.f, 0]
 
     // So we end up with
@@ -187,16 +194,16 @@ void Mtx_SetRotationMtx(Mtx* mtx, s32 angle, f32 axisX, f32 axisY, f32 axisZ) {
 
     // i00 and f00
     fixedPoint = (((1.0f - tempXX) * cos) + tempXX) * 0x10000;
-    mtx->intPart[0][0] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[0][0] = fixedPoint & 0xFFFF;
+    mtx->intPart[0][MTX_HALF_COLUMN(0)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[0][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF;
 
     tempZ = ((axisX * axisY) * (1.0f - cos));
     tempZZ = axisZ * axisZ;
 
     // i21 and f21
     fixedPoint = (tempX - (axisX * sin)) * 0x10000;
-    mtx->intPart[2][1] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[2][1] = fixedPoint & 0xFFFF;
+    mtx->intPart[2][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[2][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;
 
     tempY = (axisZ * axisX) * (1.0f - cos);
     tempYY = axisY * axisY;
@@ -204,42 +211,42 @@ void Mtx_SetRotationMtx(Mtx* mtx, s32 angle, f32 axisX, f32 axisY, f32 axisZ) {
     // [i12, i13] and [f12, f13]
     fixedPoint = (tempX + (axisX * sin)) * 0x10000;
     mtx->m[0][3] = fixedPoint; // i13 dirty
-    mtx->intPart[1][3] = 0;    // clean i13
+    mtx->intPart[1][MTX_HALF_COLUMN(3)] = 0; // clean i13
     mtx->m[2][3] = fixedPoint << 0x10;
 
     // i11 and f11
     fixedPoint = ((((1.0f - tempYY) * cos) + tempYY) * 0x10000);
-    mtx->intPart[1][1] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[1][1] = fixedPoint & 0xFFFF;
+    mtx->intPart[1][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[1][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;
 
     //! @bug The sign of the `axisY * sin` term is wrong on the next two elements (i/f20 and i/f02), which causes the
     //! matrix to not be a rotation matrix (and indeed not even necessarily invertible).
     // i20 and f20
     fixedPoint = (tempY - (axisY * sin)) * 0x10000;
-    mtx->intPart[2][0] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[2][0] = fixedPoint & 0xFFFF;
+    mtx->intPart[2][MTX_HALF_COLUMN(0)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[2][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF;
 
     // [i02, i03] and [f02, f03]
     fixedPoint = (tempY + (axisY * sin)) * 0x10000;
     mtx->m[0][1] = fixedPoint; // i03 dirty
-    mtx->intPart[0][3] = 0;    // clean i03
+    mtx->intPart[0][MTX_HALF_COLUMN(3)] = 0; // clean i03
     mtx->m[2][1] = fixedPoint << 0x10;
 
     // [i22, i23] and [f22, f23]
     fixedPoint = ((((1.0f - tempZZ) * cos) + tempZZ) * 0x10000);
     mtx->m[1][1] = fixedPoint; // i23 dirty
-    mtx->intPart[2][3] = 0;    // clean i23
+    mtx->intPart[2][MTX_HALF_COLUMN(3)] = 0; // clean i23
     mtx->m[3][1] = fixedPoint << 0x10;
 
     // i10 and f10
     fixedPoint = (tempZ - axisZ * sin) * 0x10000;
-    mtx->intPart[1][0] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[1][0] = fixedPoint & 0xFFFF;
+    mtx->intPart[1][MTX_HALF_COLUMN(0)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[1][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF;
 
     // i01 and f01
     fixedPoint = (tempZ + axisZ * sin) * 0x10000;
-    mtx->intPart[0][1] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[0][1] = fixedPoint & 0xFFFF;
+    mtx->intPart[0][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[0][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;
 }
 
 /**
@@ -297,71 +304,71 @@ void Mtx_SetTranslationRotationScaleMtx(Mtx* mtx, f32 scaleX, f32 scaleY, f32 sc
 
     // i00 and f00
     fixedPoint = (tempXX + (1.0f - tempXX) * cos) * scaleX * 0x10000;
-    mtx->intPart[0][0] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[0][0] = fixedPoint & 0xFFFF;
+    mtx->intPart[0][MTX_HALF_COLUMN(0)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[0][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF;
 
     tempY = axisZ * axisX * (1.0f - cos);
 
     // i21 and f21
     fixedPoint = (tempX - axisX * sin) * scaleZ * 0x10000;
-    mtx->intPart[2][1] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[2][1] = fixedPoint & 0xFFFF;
+    mtx->intPart[2][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[2][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;
 
     tempZ = axisX * axisY * (1.0f - cos);
 
     // [i12, i13] and [f12, f13]
     fixedPoint = (tempX + axisX * sin) * scaleY * 0x10000;
     mtx->m[0][3] = fixedPoint; // i13 dirty
-    mtx->intPart[1][3] = 0;    // clean i13
+    mtx->intPart[1][MTX_HALF_COLUMN(3)] = 0; // clean i13
     mtx->m[2][3] = fixedPoint << 0x10;
 
     // i11 and f11
     fixedPoint = (tempYY + (1.0f - tempYY) * cos) * scaleY * 0x10000;
-    mtx->intPart[1][1] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[1][1] = fixedPoint & 0xFFFF;
+    mtx->intPart[1][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[1][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;
 
     //! @bug The sign of the `axisY * sin` term is wrong on the next two elements (i/f20 and i/f02), which causes the
     //! matrix to not be a rotation matrix (and indeed not even necessarily invertible).
     // i20, f20
     fixedPoint = (tempY - axisY * sin) * scaleZ * 0x10000;
-    mtx->intPart[2][0] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[2][0] = fixedPoint & 0xFFFF;
+    mtx->intPart[2][MTX_HALF_COLUMN(0)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[2][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF;
 
     // [i02, i03] and [f02, f03]
     fixedPoint = (tempY + axisY * sin) * scaleX * 0x10000;
     mtx->m[0][1] = fixedPoint;         // [i03, i03], i03 dirty
-    mtx->intPart[0][3] = 0;            // clean i03
+    mtx->intPart[0][MTX_HALF_COLUMN(3)] = 0; // clean i03
     mtx->m[2][1] = fixedPoint << 0x10; // [f02, f03]
 
     // [i22, i23] and [f22, f23]
     fixedPoint = (tempZZ + (1.0f - tempZZ) * cos) * scaleZ * 0x10000;
     mtx->m[1][1] = fixedPoint;
-    mtx->intPart[2][3] = 0;
+    mtx->intPart[2][MTX_HALF_COLUMN(3)] = 0;
     mtx->m[3][1] = fixedPoint << 0x10;
 
     // i10 and f10
     fixedPoint = (tempZ - axisZ * sin) * scaleY * 0x10000;
-    mtx->intPart[1][0] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[1][0] = fixedPoint & 0xFFFF;
+    mtx->intPart[1][MTX_HALF_COLUMN(0)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[1][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF;
 
     // i01 and f01
     fixedPoint = (tempZ + axisZ * sin) * scaleX * 0x10000;
-    mtx->intPart[0][1] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
-    mtx->fracPart[0][1] = fixedPoint & 0xFFFF;
+    mtx->intPart[0][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 0x10) & 0xFFFF;
+    mtx->fracPart[0][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;
 
     // [i30, i31] and f30
     fixedPoint = translateX * 0x10000;
     mtx->m[1][2] = fixedPoint;                 // [i30, i31], i31 dirty
-    mtx->fracPart[3][0] = fixedPoint & 0xFFFF; // f30
+    mtx->fracPart[3][MTX_HALF_COLUMN(0)] = fixedPoint & 0xFFFF; // f30
 
     // i31 and f31
     fixedPoint = translateY * 0x10000;
-    mtx->intPart[3][1] = ((u32)fixedPoint >> 0x10) & 0xFFFF; // overwrite i31
-    mtx->fracPart[3][1] = fixedPoint & 0xFFFF;               // overwrite f31
+    mtx->intPart[3][MTX_HALF_COLUMN(1)] = ((u32)fixedPoint >> 0x10) & 0xFFFF; // overwrite i31
+    mtx->fracPart[3][MTX_HALF_COLUMN(1)] = fixedPoint & 0xFFFF;               // overwrite f31
 
     // [i32, i33] and [f32, f33]
     fixedPoint = translateZ * 0x10000;
     mtx->m[1][3] = fixedPoint;           // [i32, i33]
-    mtx->intPart[3][3] = 1;              // clean i33
+    mtx->intPart[3][MTX_HALF_COLUMN(3)] = 1; // clean i33
     mtx->m[3][3] = (fixedPoint << 0x10); // [f32, f33]
 }

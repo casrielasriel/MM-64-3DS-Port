@@ -1157,6 +1157,10 @@ void Matrix_SetTranslateRotateYXZ(f32 x, f32 y, f32 z, Vec3s* rot) {
  * @remark original name: "_MtxF_to_Mtx"
  */
 Mtx* Matrix_MtxFToMtx(MtxF* src, Mtx* dest) {
+#ifdef __3DS__
+    // keep the word-packed layout used by gu matrices and the renderer on little-endian hosts
+    guMtxF2L(src->mf, dest);
+#else
     s32 temp;
     u16* intPart = (u16*)&dest->m[0][0];
     u16* fracPart = (u16*)&dest->m[2][0];
@@ -1225,6 +1229,7 @@ Mtx* Matrix_MtxFToMtx(MtxF* src, Mtx* dest) {
     temp = src->ww * 0x10000;
     intPart[15] = (temp >> 0x10);
     fracPart[15] = temp;
+#endif
 
     return dest;
 }
@@ -1480,6 +1485,9 @@ void Matrix_MtxFCopy(MtxF* dest, MtxF* src) {
  * @remark original name: "Matrix_MtxtoMtxF"
  */
 void Matrix_MtxToMtxF(Mtx* src, MtxF* dest) {
+#ifdef __3DS__
+    guMtxL2F(dest->mf, src);
+#else
     u16* intPart = (u16*)&src->m[0][0];
     u16* fracPart = (u16*)&src->m[2][0];
 
@@ -1499,6 +1507,7 @@ void Matrix_MtxToMtxF(Mtx* src, MtxF* dest) {
     dest->yw = ((intPart[13] << 0x10) | fracPart[13]) * (1 / (f32)0x10000);
     dest->zw = ((intPart[14] << 0x10) | fracPart[14]) * (1 / (f32)0x10000);
     dest->ww = ((intPart[15] << 0x10) | fracPart[15]) * (1 / (f32)0x10000);
+#endif
 }
 
 // Unused
