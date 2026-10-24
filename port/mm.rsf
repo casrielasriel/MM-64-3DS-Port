@@ -3,7 +3,7 @@
 # e.g. FBI, are built with). The earlier hand-reconstructed RSF hung on real hardware before main() (every
 # title built with it, even a minimal probe, stayed on the HOME splash): AffinityMask 0 (no CPU core allowed
 # for the main thread), no kernel-version fields, "gsp::Gsp" instead of gsp::Gpu. Azahar enforces none of these.
-# Port values: SystemMode 96MB (Old 3DS: ~51MB image + heaps), SystemModeExt 124MB + 804MHz + L2 (New 3DS).
+# Port values: SystemMode 80MB (Old 3DS extended memory), SystemModeExt 124MB + 804MHz + L2 (New 3DS).
 BasicInfo:
   Title                   : MajorasMaskN64
   ProductCode             : CTR-H-MMNP
@@ -71,7 +71,7 @@ AccessControlInfo:
 
   # Process Settings
   MemoryType                    : Application # Application/System/Base
-  SystemMode                    : 96MB # 64MB(Default)/96MB/80MB/72MB/32MB
+  SystemMode                    : 80MB # 64MB(Default)/96MB/80MB/72MB/32MB
   IdealProcessor                : 0
   AffinityMask                  : 1
   Priority                      : 16

@@ -42,13 +42,14 @@ def font(size):
 def chime(path):
     rate, n = 32000, int(32000 * 1.0)
     with wave.open(path, "wb") as w:
-        w.setnchannels(1), w.setsampwidth(2), w.setframerate(rate)
+        w.setnchannels(2), w.setsampwidth(2), w.setframerate(rate)
         frames = bytearray()
         for i in range(n):
             t = i / rate
             f = 392.0 if t < 0.35 else 311.13
             v = 0.3 * math.sin(2 * math.pi * f * t) * math.exp(-3 * (t % 0.35 if t < 0.35 else t - 0.35))
-            frames += struct.pack("<h", int(v * 32767))
+            sample = int(v * 32767)
+            frames += struct.pack("<hh", sample, sample)
         w.writeframes(bytes(frames))
 
 
