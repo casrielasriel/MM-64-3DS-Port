@@ -1799,7 +1799,6 @@ void PortGfx_RunTask(OSTask* task) {
     Port3ds_PollInput();
     { extern void Port3ds_PumpInput(void); Port3ds_PumpInput(); } /* live buttons -> game PadMgr */
     /* PORT MM TODO (audio bring-up): OoT needed Audio_PortEnsureNullChannels() here (an OoT game-side patch) */
-    { extern void PortSram_Tick(void); PortSram_Tick(); } /* a save reaches the SD card 0.5 s after the game wrote it */
     /* PORT (2026-10-01): frame skip. On the N64 a frame that takes too long slows the game down (lag). The
      * Old 3DS spends about 80% of an update drawing it (hardware profile: ~98 ms per update, the N64 takes
      * 50 ms), so the game ran at about half speed. While the game is more than half an update behind
@@ -2551,6 +2550,7 @@ int main(int argc, char** argv) {
     }
     Graph_ThreadEntry(0);
 
+    { extern void PortFlashrom_WaitIdle(void); PortFlashrom_WaitIdle(); }
     boot_halt("graph loop exited");
     gfxExit();
     return 0;

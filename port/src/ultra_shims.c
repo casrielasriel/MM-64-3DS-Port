@@ -128,10 +128,7 @@ static u64 TicksNow(void) {
 }
 #endif
 
-#ifndef __3DS__
-/* on 3DS, libctru provides osGetTime — avoid the symbol collision */
 OSTime osGetTime(void) { return TicksNow(); }
-#endif
 void osSetTime(OSTime t) { (void)t; }
 u32 osGetCount(void) { return (u32)TicksNow(); }
 

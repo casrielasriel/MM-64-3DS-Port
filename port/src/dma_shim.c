@@ -16,7 +16,6 @@
 #include "ultra64.h"
 extern int fprintf(); extern void* stderr;
 extern void* fopen(); extern int fseek(); extern long ftell(); extern u32 fread(); extern int fclose();
-extern u32 fwrite(); extern int rename(); extern int remove();
 extern void* malloc(); extern void exit(); extern void* memcpy(); extern void* memset();
 #define SEEK_SET 0
 #define SEEK_END 2
@@ -248,95 +247,3 @@ s32 DmaMgr_AudioDmaHandler(OSPiHandle* pihandle, OSIoMesg* mb, s32 direction) {
     }
     return 0;
 }
-
-#ifdef __3DS__
-/* --- SRAM save persistence ---------------------------------------------
- * The game's SsSram driver DMAs save data to/from cart address 0x08000000
- * (32KB). On N64 that's battery-backed cartridge SRAM; here we back it with a
- * file on the SD card so saves survive power-off. Called from the osEPiStartDma
- * shim (ultra_shims2.c) for any DMA in the [0x08000000, 0x08008000) window —
- * that shim is the only place that still has the read/write `direction`. */
-#define SRAM_FILE      "sdmc:/3ds/mm/save.bin"
-#define SRAM_TMP       "sdmc:/3ds/mm/save.tmp"
-#define SRAM_BAK       "sdmc:/3ds/mm/save.bak"
-#define PORT_SRAM_SIZE 0x8000u
-static u8 sSram[PORT_SRAM_SIZE];
-static int sSramLoaded = 0;
-static int sSramDirty, sSramDirtyAge;
-
-static void SramLoad(void) {
-    void* f = fopen(SRAM_FILE, "rb");
-    if (f == NULL) {
-        f = fopen(SRAM_BAK, "rb"); /* a save interrupted between the two renames below */
-    }
-    if (f != NULL) { fread(sSram, 1, PORT_SRAM_SIZE, f); fclose(f); }
-    /* no file -> a fresh cartridge: SRAM reads 0xFF (as ares' blank SRAM). PORT (2026-09-28): it was zeroed,
-     * and an all-zero slot passes the game's checksum (0 == 0), so file select loaded empty "valid" saves
-     * instead of initializing new ones (tools/statediff/bootflow.py: 86 SaveContext differences) */
-    else { memset(sSram, 0xFF, PORT_SRAM_SIZE); }
-    sSramLoaded = 1;
-}
-/* PORT (2026-10-02): the new image is written completely before it replaces the old one, so a power loss or a
- * removed SD card during a save leaves the previous save (save.bin, or save.bak between the renames), never a
- * truncated file. Rewriting save.bin in place destroyed it in that case. */
-static void SramFlush(void) {
-    extern void PortDbgX(const char* label, unsigned val);
-    extern u64 svcGetSystemTick(void);
-    u64 t0 = svcGetSystemTick();
-    void* f = fopen(SRAM_TMP, "wb");
-    u32 n;
-    if (f == NULL) {
-        PortDbgX("[save] FAILED to create save.tmp", 0);
-        return;
-    }
-    n = fwrite(sSram, 1, PORT_SRAM_SIZE, f);
-    if (fclose(f) != 0 || n != PORT_SRAM_SIZE) {
-        remove(SRAM_TMP);
-        PortDbgX("[save] FAILED to write save.tmp, bytes", n);
-        return;
-    }
-    remove(SRAM_BAK);
-    rename(SRAM_FILE, SRAM_BAK); /* fails harmlessly when there is no save yet */
-    if (rename(SRAM_TMP, SRAM_FILE) != 0) {
-        PortDbgX("[save] FAILED to rename save.tmp to save.bin", 0);
-        return;
-    }
-    /* (one line per save, always: release checklist "saving is quick" is timed from it) */
-    PortDbgX("[save] written, ms", (unsigned)((svcGetSystemTick() - t0) / 268112u)); /* (ticks at 268.11 MHz) */
-}
-
-/* PORT (2026-10-02): one file write per save. The game writes a save as several SRAM DMAs (the slot, its
- * backup copy, the header), and each one rewrote the whole file; on 3DS SD cards creating a file can take
- * very long (the Super Mario 64 3DS port measured seconds). The image is written 10 updates (0.5 s) after the
- * last SRAM write (PortSram_Tick, every update) and at once when the software is closed (PortSram_FlushNow). */
-void PortSram_Tick(void) {
-    if (sSramDirty && ++sSramDirtyAge >= 10) {
-        SramFlush();
-        sSramDirty = 0;
-    }
-}
-void PortSram_FlushNow(void) {
-    if (sSramDirty) {
-        SramFlush();
-        sSramDirty = 0;
-    }
-}
-
-s32 PortSram_Dma(OSIoMesg* mb, s32 direction) {
-    u32 off = (u32)mb->devAddr - 0x08000000u;
-    if (!sSramLoaded) SramLoad();
-    if (off < PORT_SRAM_SIZE && off + mb->size <= PORT_SRAM_SIZE) {
-        if (direction == OS_WRITE) {
-            memcpy(sSram + off, mb->dramAddr, mb->size);
-            sSramDirty = 1; /* written by PortSram_Tick once the game has finished saving */
-            sSramDirtyAge = 0;
-        } else {
-            memcpy(mb->dramAddr, sSram + off, mb->size);
-        }
-    }
-    if (mb->hdr.retQueue != NULL) {
-        osSendMesg(mb->hdr.retQueue, NULL, OS_MESG_NOBLOCK);
-    }
-    return 0;
-}
-#endif
