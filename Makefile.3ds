@@ -193,7 +193,7 @@ $(HUD_NATIVE_OBJS): $(BUILD)/src/code/%.o: $(BUILD)/native_hud/%.c
 	$(CC) $(CC_FLAGS) -Isrc/code -MMD -MP -c -o $@ $<
 
 $(BUILD)/native_player/z_player.c: src/overlays/actors/ovl_player_actor/z_player.c \
-    tools/port/gen_native_player.py tools/port/gen_native_audio.py port/include/port_minimap.h
+    tools/port/gen_native_player.py tools/port/gen_native_audio.py port/include/port_input.h port/include/port_minimap.h
 	@mkdir -p $(dir $@)
 	python3 tools/port/gen_native_player.py $< $@
 

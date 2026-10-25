@@ -7,6 +7,7 @@
  */
 #include <3ds.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
 #include <math.h>
@@ -16,6 +17,7 @@
 #include "gfx_pc.h"
 #include "gfx_3ds.h"
 #include "gfx_rendering_api.h"
+#include "port_input.h"
 
 /* N64 controller button bits (from include/controller.h) */
 #define BTN_A_      0x8000
@@ -89,6 +91,7 @@ static int sSpeedRulesAB;         /* settings speed_rules_ab=1: speed rules 1 / 
 static int sO3dsLayout;          /* settings o3ds_layout=1: the Old 3DS thread layout on a New 3DS (with o3ds_sim=1) */
 int Port3ds_OnRenderThread(void);
 static int sCstickCamera = 1; /* settings cstick=0: the New 3DS C-stick presses the C buttons, not the camera */
+static int sGyroSensitivityPercent = 250;
 int gPortStereoTest; /* settings stereo_test=1: 3D toggles every 2 s (gfx_3ds.c), freeze reproduction */
 static volatile u32 sProfHist[PROF_COUNT];
 static volatile int sProfRun;
@@ -165,6 +168,9 @@ static void Port3ds_SaveSettings(void) {
             { extern int gPortAudioShare; if (gPortAudioShare != 55) fprintf(f, "audio_share=%d\n", gPortAudioShare); }
             if (sAudioShareAB) fprintf(f, "audio_share_ab=1\n");
             if (!sCstickCamera) fprintf(f, "cstick=0\n");
+            if (sGyroSensitivityPercent != 250) {
+                fprintf(f, "gyro_sensitivity=%d\n", sGyroSensitivityPercent);
+            }
             { extern int gPortAA; if (gPortAA && !sAaAB) fprintf(f, "aa=1\n"); }
             { extern int gPortGpuVtx; if (!gPortGpuVtx && !sGpuAB) fprintf(f, "gpu_vtx=0\n"); }
             if (sInterp != 1) fprintf(f, "fps60=%d\n", sInterp);
@@ -238,6 +244,9 @@ static void Port3ds_LoadSettings(void) {
         if (sscanf(line, "raw_near=%d", &v) == 1) { extern int gPortRawNear; gPortRawNear = v; }
         if (sscanf(line, "raw_ratio=%d", &v) == 1 && v >= 10) { extern float gPortRawRatio; gPortRawRatio = v / 10.0f; }
         if (sscanf(line, "cstick=%d", &v) == 1) { sCstickCamera = v != 0; }
+        if (sscanf(line, "gyro_sensitivity=%d", &v) == 1 && v > 0 && v <= 1000) {
+            sGyroSensitivityPercent = v;
+        }
         if (sscanf(line, "flipdump=%d", &v) == 1) { extern int gPortFlipDump; gPortFlipDump = v != 0; }
         if (sscanf(line, "tjdump=%d", &v) == 1) { extern int gPortTjDumpFrame; gPortTjDumpFrame = v; }
         if (sscanf(line, "aa_ab=%d", &v) == 1) {
@@ -887,12 +896,74 @@ static void Port3ds_TouchUiInit(void) {
  * update, as on the N64. */
 static u32 sTapDownAcc;      /* KEY_TOUCH / KEY_ZR presses since the last update's poll */
 static touchPosition sTapPos; /* where that touch landed */
+static int sGyroReady = -1;
+static float sGyroCoefficient;
+static u64 sGyroTick;
+static float sGyroPitchAccum, sGyroYawAccum;
+static float sGyroPitchFrame, sGyroYawFrame;
+static u32 sGyroFrame, sGyroReadFrame;
+static int sGyroWasActive;
+
+static void Port3ds_GyroExit(void) {
+    HIDUSER_DisableGyroscope();
+}
+
+static void Port3ds_SampleGyro(void) {
+    if (sGyroReady != 1) {
+        return;
+    }
+    u64 now = svcGetSystemTick();
+    float elapsed = (float)(now - sGyroTick) / 268111856.0f;
+    sGyroTick = now;
+    if (elapsed > 0.1f) {
+        sGyroPitchAccum = sGyroYawAccum = 0.0f;
+        sGyroWasActive = 0;
+        return;
+    }
+    angularRate rate;
+    hidGyroRead(&rate);
+    float pitch = rate.x / sGyroCoefficient;
+    float yaw = rate.y / sGyroCoefficient;
+    float scale = elapsed * (65536.0f / 360.0f) * (sGyroSensitivityPercent / 100.0f);
+    if (fabsf(pitch) >= 0.5f) {
+        sGyroPitchAccum += pitch * scale;
+    }
+    if (fabsf(yaw) >= 0.5f) {
+        sGyroYawAccum += yaw * scale;
+    }
+}
+
+int Port3ds_ReadGyro(int active, float* pitch, float* yaw) {
+    *pitch = *yaw = 0.0f;
+    if (active && sGyroReady < 0) {
+        sGyroReady = 0;
+        if (R_SUCCEEDED(HIDUSER_GetGyroscopeRawToDpsCoefficient(&sGyroCoefficient)) &&
+            sGyroCoefficient > 0.0f && R_SUCCEEDED(HIDUSER_EnableGyroscope())) {
+            sGyroReady = 1;
+            sGyroTick = svcGetSystemTick();
+            atexit(Port3ds_GyroExit);
+        }
+    }
+    if (!active || sGyroReady != 1) {
+        sGyroWasActive = 0;
+        return 0;
+    }
+    if (sGyroWasActive && sGyroFrame - sGyroReadFrame == 1) {
+        *pitch = sGyroPitchFrame;
+        *yaw = sGyroYawFrame;
+    }
+    sGyroReadFrame = sGyroFrame;
+    sGyroWasActive = 1;
+    return 1;
+}
+
 void Port3ds_ScanBetweenUpdates(void) {
     u32 d;
     if (Port3ds_OnRenderThread()) {
         return;
     }
     hidScanInput();
+    Port3ds_SampleGyro();
     d = hidKeysDown() & (KEY_TOUCH | KEY_ZR);
     if ((d & KEY_TOUCH) && !(sTapDownAcc & KEY_TOUCH)) {
         hidTouchRead(&sTapPos);
@@ -1086,6 +1157,11 @@ s8 gPortCamX, gPortCamY;     /* C-stick camera input for this update (z_camera.c
 int gPortMenuInput;          /* > 0 while a menu is up (set each update by the game: file select, pause) */
 static void Port3ds_PollInput(void) {
     hidScanInput();
+    Port3ds_SampleGyro();
+    sGyroPitchFrame = sGyroPitchAccum;
+    sGyroYawFrame = sGyroYawAccum;
+    sGyroPitchAccum = sGyroYawAccum = 0.0f;
+    sGyroFrame++;
     u32 k = hidKeysHeld();
     /* PORT (2026-09-30): the button layout, complete on the Old 3DS (no ZL/ZR, no C-stick):
      *   A/B = A/B, L = Z-target, R = shield, Y/X = C-left/C-right, D-pad = C-up/C-down/C-left/C-right
