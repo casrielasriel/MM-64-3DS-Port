@@ -23,6 +23,12 @@ docs/doxygen/
 *.v64
 
 # Tools
+/tools/*
+!/tools/port/
+/tools/port/*
+!/tools/port/gen_native_audio.py
+!/tools/port/gen_native_hud.py
+!/tools/port/gen_native_player.py
 .venv/
 ctx.c
 *.c.m2c

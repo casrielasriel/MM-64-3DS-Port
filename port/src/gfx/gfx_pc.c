@@ -2040,6 +2040,12 @@ static uint8_t sLoadLit[MAX_VERTICES + 4];       /* its light set + 1, 0 = unlit
 int gPortRawRelax;
 static RawLights sRawLights[RAW_LIGHT_SETS];
 static int sRawLightsN;                          /* sets this frame */
+static struct {
+    Light_t lights[5];
+    float projection[4][4];
+    float aspect;
+    int count, index;
+} sRawLightCache;
 static int sRawDraw;                             /* the backend draws with the raw program */
 static int sRawLitCur = -1;                      /* light set (+1) of the raw batch being built */
 static uint32_t sRawParamBatch;                  /* batch whose raw parameters were sent */
@@ -2055,8 +2061,17 @@ extern void* gfx_citro3d_raw_vbo(int** pos, u32* cap);
 static int raw_light_set(int cam) {
     RawLights L;
     int i, k, n = rsp.current_num_lights - 1;
+    float aspect = 0.0f;
     if (n > 4 || n < 0) {
         return 0;
+    }
+    if (cam) {
+        aspect = gfx_adjust_x_for_aspect_ratio(1.0f);
+        if (sRawLightCache.index != 0 && sRawLightCache.count == n && sRawLightCache.aspect == aspect &&
+            memcmp(sRawLightCache.projection, rsp.P_matrix, sizeof(sRawLightCache.projection)) == 0 &&
+            memcmp(sRawLightCache.lights, rsp.current_lights, (n + 1) * sizeof(Light_t)) == 0) {
+            return sRawLightCache.index;
+        }
     }
     if (!cam && rsp.lights_changed) {
         lights_refresh();
@@ -2107,16 +2122,22 @@ static int raw_light_set(int cam) {
         /* the shader reads x, y and z of the camera from the palette rows (y', -x' = -aspect * x, w = -z): x and y
          * scaled back by the perspective's factors; |w row| is the modelview's scale times sw, folded into x and y */
         L.lit[1] = 1.0f;
-        L.lit[2] = -sw / (gfx_adjust_x_for_aspect_ratio(1.0f) * sx);
+        L.lit[2] = -sw / (aspect * sx);
         L.lit[3] = sw / sy;
     }
-    if (sRawLightsN > 0 && memcmp(&L, &sRawLights[sRawLightsN - 1], sizeof(L)) == 0) {
-        return sRawLightsN;
+    if (sRawLightsN == 0 || memcmp(&L, &sRawLights[sRawLightsN - 1], sizeof(L)) != 0) {
+        if (sRawLightsN >= RAW_LIGHT_SETS) {
+            return 0;
+        }
+        sRawLights[sRawLightsN++] = L;
     }
-    if (sRawLightsN >= RAW_LIGHT_SETS) {
-        return 0;
+    if (cam) {
+        memcpy(sRawLightCache.lights, rsp.current_lights, (n + 1) * sizeof(Light_t));
+        memcpy(sRawLightCache.projection, rsp.P_matrix, sizeof(sRawLightCache.projection));
+        sRawLightCache.aspect = aspect;
+        sRawLightCache.count = n;
+        sRawLightCache.index = sRawLightsN;
     }
-    sRawLights[sRawLightsN++] = L;
     return sRawLightsN;
 }
 
@@ -5298,6 +5319,7 @@ void gfx_start_frame(void) {
     sRawDraw = 0;
     sRawLitCur = -1;
     sRawLightsN = 0;
+    sRawLightCache.index = 0;
     sInRoomDl = 0;
     sDlBranches = 0;
 #endif
