@@ -351,6 +351,7 @@ static void gfx_3ds_handle_events(void)
 {
     if (!aptMainLoop()) {
         { extern void PortFlashrom_WaitIdle(void); PortFlashrom_WaitIdle(); }
+        { extern void Port3ds_AudioTaskWait(void); Port3ds_AudioTaskWait(); }
         { extern void Port3ds_LogFlush(void); Port3ds_LogFlush(); } /* log lines the writer has not written */
         /* PORT (2026-09-30): shut graphics down before exit(). exit() unmaps the app heap, and libctru's
          * GSP event thread (stack on that heap) was still running: HOME -> Close crashed with a data

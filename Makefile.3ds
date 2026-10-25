@@ -82,6 +82,12 @@ GAME_DECOMP := $(filter-out $(GAME_EXCLUDE), \
     $(wildcard src/libultra/gu/*.c)
 
 # PORT shims + generated tables compile in the GAME world.
+AUDIO_NATIVE_INPUTS := $(addprefix src/audio/lib/,$(addsuffix .c,load playback thread seqplayer effects)) \
+                       src/audio/code_8019AF00.c
+AUDIO_NATIVE_SRCS := $(addprefix $(BUILD)/native_audio/,$(notdir $(AUDIO_NATIVE_INPUTS)))
+AUDIO_NATIVE_OBJS := $(AUDIO_NATIVE_SRCS:.c=.o)
+GAME_DECOMP := $(filter-out $(AUDIO_NATIVE_INPUTS) src/audio/lib/aisetnextbuf.c,$(GAME_DECOMP))
+
 PORT_GAME_SRCS := \
   port/src/ultra_shims.c port/src/ultra_shims2.c port/src/ultra_shims3.c \
   port/src/dma_shim.c port/src/sched_shim.c port/src/arena_shim.c \
@@ -107,7 +113,7 @@ ASSET_EXTRACTED ?= extracted/$(VERSION)
 -include port/asset_srcs.mk
 
 GAME_SRCS  := $(GAME_DECOMP) $(PORT_GAME_SRCS)
-GAME_OBJS  := $(addprefix $(BUILD)/,$(GAME_SRCS:.c=.o))
+GAME_OBJS  := $(addprefix $(BUILD)/,$(GAME_SRCS:.c=.o)) $(AUDIO_NATIVE_OBJS)
 DEVKIT_OBJS:= $(addprefix $(BUILD)/,$(DEVKIT_SRCS:.c=.o))
 ASSET_OBJS := $(addprefix $(BUILD)/,$(ASSET_SRCS:.c=.o))
 SHADER_OBJ := $(BUILD)/shader_shbin.o
@@ -157,6 +163,24 @@ $(BUILD)/src/overlays/fbdemos/ovl_fbdemo_wipe1/z_fbdemo_wipe1.o: PORT_COLOR_SETT
 # gSequenceFontTable is game data: generated from your own ROM's N64 build, never committed
 port/src_gen/sequence_font_table_data.c: build/$(VERSION)/assets/audio/sequence_font_table.o tools/port/gen_sequence_font_table.py
 	python3 tools/port/gen_sequence_font_table.py
+
+port/include/assets/audio/sequence_sizes.h port/include/assets/audio/soundfont_sizes.h &: \
+    port/audio_syms_stub.ld tools/port/gen_link_symbols.py include/tables/sequence_table.h \
+    build/$(VERSION)/assets/audio/soundfont_table.h
+	python3 tools/port/gen_link_symbols.py --audio-headers
+
+$(BUILD)/src/audio/session_init.o: port/include/assets/audio/sequence_sizes.h port/include/assets/audio/soundfont_sizes.h
+
+$(BUILD)/native_audio/%.c: src/audio/lib/%.c tools/port/gen_native_audio.py port/include/port_audio.h
+	@mkdir -p $(dir $@)
+	python3 tools/port/gen_native_audio.py $< $@
+
+$(BUILD)/native_audio/%.c: src/audio/%.c tools/port/gen_native_audio.py port/include/port_audio.h
+	@mkdir -p $(dir $@)
+	python3 tools/port/gen_native_audio.py $< $@
+
+$(AUDIO_NATIVE_OBJS): %.o: %.c
+	$(CC) $(CC_FLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)

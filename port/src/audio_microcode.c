@@ -20,10 +20,202 @@
 #include "ultra64.h"
 #include "ultra64/abi.h"
 #include <string.h>
+#include "port_audio.h"
 
 extern void PortDbgX(const char* label, unsigned val);
 
-int sPortAudioUcodeEnable = 1;
+static u8 sFontSeen[0x10000 / 16];
+static u8* sFontData;
+static u32 sFontSize;
+
+static u32 FontOffset(const void* data, u32 size) {
+    u32 offset = (const u8*)data - sFontData;
+    if ((offset & 1) || offset > sFontSize || size > sFontSize - offset) {
+        Fault_AddHungupAndCrash("port soundfont bounds", __LINE__);
+    }
+    return offset;
+}
+
+static s32 FontSeen(const void* data) {
+    u32 half = FontOffset(data, 2) / 2;
+    return (sFontSeen[half / 8] >> (half % 8)) & 1;
+}
+
+static u16 FontHalf(void* data) {
+    u32 half = FontOffset(data, 2) / 2;
+    u16* value = data;
+    if (!FontSeen(data)) {
+        *value = PortAudio_ReadU16(data);
+        sFontSeen[half / 8] |= 1 << (half % 8);
+    }
+    return *value;
+}
+
+static u32 FontWord(void* data) {
+    u32 half = FontOffset(data, 4) / 2;
+    u32* value = data;
+    if (!FontSeen(data)) {
+        const u8* bytes = data;
+        u32 native = ((u32)bytes[0] << 24) | ((u32)bytes[1] << 16) | ((u32)bytes[2] << 8) | bytes[3];
+        *value = native;
+        sFontSeen[half / 8] |= 1 << (half % 8);
+        half++;
+        sFontSeen[half / 8] |= 1 << (half % 8);
+    }
+    return *value;
+}
+
+static void FontEnvelope(u32 offset) {
+    EnvelopePoint* point;
+    if (offset == 0) {
+        return;
+    }
+    point = (EnvelopePoint*)(sFontData + offset);
+    do {
+        FontHalf(&point->delay);
+        FontHalf(&point->arg);
+    } while ((point++)->delay > 0);
+}
+
+static void FontTunedSample(TunedSample* tuned) {
+    u32 offset = FontWord(&tuned->sample);
+    Sample* sample;
+    u32 flags;
+    u32 i;
+
+    FontWord(&tuned->tuning);
+    if (offset == 0) {
+        return;
+    }
+    sample = (Sample*)(sFontData + offset);
+    if (FontSeen(sample)) {
+        return;
+    }
+    flags = FontWord(sample);
+    *(u32*)sample = 0;
+    sample->unk_0 = flags >> 31;
+    sample->codec = (flags >> 28) & 7;
+    sample->medium = (flags >> 26) & 3;
+    sample->unk_bit26 = (flags >> 25) & 1;
+    sample->isRelocated = (flags >> 24) & 1;
+    sample->size = flags & 0xFFFFFF;
+    FontWord(&sample->sampleAddr);
+    offset = FontWord(&sample->loop);
+    if (offset != 0) {
+        AdpcmLoop* loop = (AdpcmLoop*)(sFontData + offset);
+        FontWord(&loop->header.start);
+        FontWord(&loop->header.loopEnd);
+        FontWord(&loop->header.count);
+        FontWord(&loop->header.sampleEnd);
+        if (loop->header.count != 0) {
+            for (i = 0; i < 16; i++) {
+                FontHalf(&loop->predictorState[i]);
+            }
+        }
+    }
+    offset = FontWord(&sample->book);
+    if (offset != 0) {
+        AdpcmBook* book = (AdpcmBook*)(sFontData + offset);
+        u32 coefficients;
+        FontWord(&book->header.order);
+        FontWord(&book->header.numPredictors);
+        coefficients = 8 * book->header.order * book->header.numPredictors;
+        for (i = 0; i < coefficients; i++) {
+            FontHalf(&book->codeBook[i]);
+        }
+    }
+}
+
+void PortAudio_NormalizeFont(s32 fontId, void* data) {
+    SoundFont* font = &gAudioCtx.soundFontList[fontId];
+    u32* header = data;
+    u32 offset;
+    s32 i;
+
+    sFontData = data;
+    sFontSize = gAudioCtx.soundFontTable->entries[fontId].size;
+    if (sFontSize > 0x10000) {
+        Fault_AddHungupAndCrash("port soundfont size", __LINE__);
+    }
+    memset(sFontSeen, 0, (sFontSize + 15) / 16);
+    offset = FontWord(&header[0]);
+    if (offset != 0) {
+        u32* drums = (u32*)(sFontData + offset);
+        for (i = 0; i < font->numDrums; i++) {
+            offset = FontWord(&drums[i]);
+            if (offset != 0) {
+                Drum* drum = (Drum*)(sFontData + offset);
+                FontTunedSample(&drum->tunedSample);
+                FontEnvelope(FontWord(&drum->envelope));
+            }
+        }
+    }
+    offset = FontWord(&header[1]);
+    if (offset != 0) {
+        SoundEffect* sfx = (SoundEffect*)(sFontData + offset);
+        for (i = 0; i < font->numSfx; i++) {
+            FontTunedSample(&sfx[i].tunedSample);
+        }
+    }
+    for (i = 0; i < font->numInstruments && i < 126; i++) {
+        offset = FontWord(&header[2 + i]);
+        if (offset != 0) {
+            Instrument* instrument = (Instrument*)(sFontData + offset);
+            FontEnvelope(FontWord(&instrument->envelope));
+            if (instrument->normalRangeLo != 0) {
+                FontTunedSample(&instrument->lowPitchTunedSample);
+            }
+            FontTunedSample(&instrument->normalPitchTunedSample);
+            if (instrument->normalRangeHi != 0x7F) {
+                FontTunedSample(&instrument->highPitchTunedSample);
+            }
+        }
+    }
+}
+
+s32 PortAudio_IsSequenceData(const void* data) {
+    s32 i;
+    uintptr_t address = (uintptr_t)data;
+    for (i = 0; i < ARRAY_COUNT(gAudioCtx.seqPlayers); i++) {
+        SequencePlayer* player = &gAudioCtx.seqPlayers[i];
+        AudioTableEntry* entry;
+        uintptr_t start = (uintptr_t)player->seqData;
+        if (!player->enabled || start == 0 || player->seqId >= gAudioCtx.numSequences) {
+            continue;
+        }
+        entry = &gAudioCtx.sequenceTable->entries[player->seqId];
+        if (entry->size == 0) {
+            entry = &gAudioCtx.sequenceTable->entries[entry->romAddr];
+        }
+        if (address >= start && address - start < entry->size) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void PortAudio_CopyFilter(s16* dest, const s16* source) {
+    s32 i;
+    s32 bigEndian = PortAudio_IsSequenceData(source);
+    for (i = 0; i < 8; i++) {
+        dest[i] = bigEndian ? (s16)PortAudio_ReadU16(&source[i]) : source[i];
+    }
+}
+
+void PortAudio_LoadFilter(s16* dest, s32 lowPass, s32 highPass) {
+    s16 filter[8];
+    s32 i;
+    if (!PortAudio_IsSequenceData(dest)) {
+        AudioHeap_LoadFilter(dest, lowPass, highPass);
+        return;
+    }
+    AudioHeap_LoadFilter(filter, lowPass, highPass);
+    for (i = 0; i < 8; i++) {
+        u8* bytes = (u8*)&dest[i];
+        bytes[0] = (u16)filter[i] >> 8;
+        bytes[1] = filter[i];
+    }
+}
 
 #define ROUND_UP_64(v) (((v) + 63) & ~63)
 #define ROUND_UP_32(v) (((v) + 31) & ~31)
@@ -109,13 +301,13 @@ static inline s16 clamp16(s32 v) {
 typedef struct { unsigned base_addr, size, perm, state; } PortMemInfo;
 extern int svcQueryMemory(PortMemInfo* info, unsigned* pageFlags, unsigned addr);
 
-/* Is [addr, addr+len) readable+writable process memory? The engine can hand the microcode
+/* Does [addr, addr+len) have the requested access permissions? The engine can hand the microcode
  * out-of-range addresses (e.g. a note whose sample changed keeps a play position past the new
  * sample's loop end -> AudioLoad_DmaSampleData's size check wraps -> pointer ~2MB past a DMA
  * buffer). On N64 that just reads other RDRAM (garbage audio); on 3DS hardware unmapped memory
  * faults (Azahar only logs it). Regions are cached so this is ~free per command. */
-static int ext_range_ok(u32 addr, u32 len) {
-    static u32 sBase[4], sEnd[4];
+static int ext_range_ok(u32 addr, u32 len, u32 access) {
+    static u32 sBase[4], sEnd[4], sPerm[4];
     static int sNext = 0;
     PortMemInfo mi;
     unsigned pf;
@@ -123,25 +315,25 @@ static int ext_range_ok(u32 addr, u32 len) {
     int i;
     if (end < addr) return 0;
     for (i = 0; i < 4; i++) {
-        if (addr >= sBase[i] && end <= sEnd[i]) return 1;
+        if (addr >= sBase[i] && end <= sEnd[i] && (sPerm[i] & access) == access) return 1;
     }
     if (svcQueryMemory(&mi, &pf, addr) < 0) return 0;
-    if (mi.state == 0 /* MEMSTATE_FREE */ || (mi.perm & 3) != 3 /* R+W */) return 0;
+    if (mi.state == 0 /* MEMSTATE_FREE */ || (mi.perm & access) != access) return 0;
     sBase[sNext] = mi.base_addr;
     sEnd[sNext] = mi.base_addr + mi.size;
+    sPerm[sNext] = mi.perm;
     sNext = (sNext + 1) & 3;
     return end <= mi.base_addr + mi.size;
 }
 
-extern u8 gAudioHeap[];
-
-static void* ext_ptr(u32 addr, u32 len) {
+static void* ext_ptr(u32 addr, u32 len, int write) {
     addr &= 0x7FFFFFFFu;
     /* fast path: nearly everything (sample DMA buffers, states, reverb, AI buffers) is in the audio heap */
-    if (addr >= (u32)gAudioHeap && addr + len >= addr && addr + len <= (u32)gAudioHeap + 0x38000u) {
+    if (addr >= (u32)gAudioCtx.audioHeap && addr + len >= addr &&
+        addr + len <= (u32)gAudioCtx.audioHeap + gAudioCtx.audioHeapSize) {
         return (void*)(uintptr_t)addr;
     }
-    if (addr < 0x00100000u || !ext_range_ok(addr, len)) {
+    if (addr < 0x00100000u || !ext_range_ok(addr, len, write ? 3 : 1)) {
         static unsigned sBadN = 0;
         if ((sBadN++ & 1023) == 0) PortDbgX("[audio] ucode: out-of-range RDRAM addr (ignored)", addr);
         return NULL;
@@ -153,7 +345,7 @@ static void* ext_ptr(u32 addr, u32 len) {
  * so the command still runs (from silence) instead of being skipped. */
 static s16* ext_state(u32 addr) {
     static PortAdpcmState sScratch;
-    s16* p = (s16*)ext_ptr(addr, sizeof(PortAdpcmState));
+    s16* p = (s16*)ext_ptr(addr, sizeof(PortAdpcmState), 1);
     if (p == NULL) {
         memset(sScratch, 0, sizeof(sScratch));
         return sScratch;
@@ -169,7 +361,7 @@ static void aClearBufferImpl(u16 addr, s32 nbytes) {
 }
 
 static void aLoadBufferImpl(u32 src, u16 dest_addr, u16 nbytes) {
-    const void* s = ext_ptr(src, nbytes);
+    const void* s = ext_ptr(src, nbytes, 0);
     if (s == NULL) { /* N64 would load garbage; load silence */
         memset(BUF_U8(dest_addr), 0, nbytes);
         return;
@@ -178,7 +370,7 @@ static void aLoadBufferImpl(u32 src, u16 dest_addr, u16 nbytes) {
 }
 
 static void aSaveBufferImpl(u16 source_addr, u32 dst, u16 nbytes) {
-    void* d = ext_ptr(dst, ROUND_DOWN_16(nbytes));
+    void* d = ext_ptr(dst, ROUND_DOWN_16(nbytes), 1);
     if (d == NULL) return;
     memcpy(d, BUF_S16(source_addr), ROUND_DOWN_16(nbytes));
 }
@@ -186,7 +378,7 @@ static void aSaveBufferImpl(u16 source_addr, u32 dst, u16 nbytes) {
 static void aLoadADPCMImpl(u32 nbytes, u32 src) {
     const void* s;
     if (nbytes > sizeof(rspa.adpcm_table)) nbytes = sizeof(rspa.adpcm_table);
-    s = ext_ptr(src, nbytes);
+    s = ext_ptr(src, nbytes, 0);
     if (s == NULL) return;
     memcpy(rspa.adpcm_table, s, nbytes);
 }
@@ -219,7 +411,7 @@ static void aDMEMMoveImpl(u16 in_addr, u16 out_addr, s32 nbytes) {
 }
 
 static void aSetLoopImpl(u32 addr) {
-    rspa.adpcm_loop_state = (s16*)ext_ptr(addr, sizeof(PortAdpcmState));
+    rspa.adpcm_loop_state = (s16*)ext_ptr(addr, sizeof(PortAdpcmState), 0);
 }
 
 static void aADPCMdecImpl(u8 flags, s16* state) {
@@ -520,7 +712,7 @@ static void aFilterImpl(u8 flags, u16 count_or_buf, u32 addr) {
     s16* state_or_filter = ext_state(addr);
     if (flags > A_INIT) {
         rspa.filter_count = DMEM_LEN(ROUND_UP_16(count_or_buf));
-        memcpy(rspa.filter, state_or_filter, sizeof(rspa.filter));
+        PortAudio_CopyFilter(rspa.filter, state_or_filter);
     } else {
         s16 tmp[16], tmp2[8];
         int count = rspa.filter_count;
@@ -589,7 +781,7 @@ static void aHiLoGainImpl(u8 g, u16 count, u16 addr) {
             *samples = clamp16((*samples * g) >> 4);
             samples++;
         }
-        nbytes -= 8;
+        nbytes -= 8 * sizeof(s16);
     } while (nbytes > 0);
 }
 
@@ -610,69 +802,14 @@ static void aUnkCmd19Impl(u8 f, u16 count, u16 out_addr, u16 in_addr) {
     } while (nbytes > 0);
 }
 
-#if defined(__3DS__) && defined(__ARM_ARCH_6K__)
-/* PORT (2026-09-30): self-test of the ARMv6 SIMD paths against the scalar reference (random inputs);
- * logged once at the first audio task. Mismatches = the optimization is not bit-exact. */
-static void PortAudio_SimdSelfTest(void) {
-    u32 seed = 12345, bad = 0, n;
-    for (n = 0; n < 20000; n++) {
-        s32 v;
-        s16 a, b;
-        seed = seed * 1664525u + 1013904223u;
-        v = (s32)seed >> 8; /* wide range around +-2^23 */
-        a = clamp16(v);
-        b = (v < -0x8000) ? -0x8000 : (v > 0x7fff) ? 0x7fff : (s16)v;
-        if (a != b) bad++;
-    }
-    for (n = 0; n < 2000; n++) {
-        s16 tmp[16], filt[8], frev[8] __attribute__((aligned(4)));
-        int i, j;
-        for (i = 0; i < 16; i++) { seed = seed * 1664525u + 1013904223u; tmp[i] = (s16)(seed >> 16); }
-        for (i = 0; i < 8; i++) { seed = seed * 1664525u + 1013904223u; filt[i] = (s16)(seed >> 16); }
-        for (j = 0; j < 8; j++) frev[j] = filt[7 - j];
-        for (i = 0; i < 8; i++) {
-            s64 ref = 0x4000;
-            u32 lo = 0x4000, hi = 0;
-            const u32* fp = (const u32*)frev;
-            for (j = 0; j < 8; j++) ref += tmp[i + j] * filt[7 - j];
-            for (j = 0; j < 8; j += 2) {
-                u32 x = (u16)tmp[i + j] | ((u32)(u16)tmp[i + j + 1] << 16);
-                __asm__("smlald %0, %1, %2, %3" : "+r"(lo), "+r"(hi) : "r"(x), "r"(fp[j >> 1]));
-            }
-            if ((s64)(((u64)hi << 32) | lo) != ref) bad++;
-        }
-    }
-    for (n = 0; n < 20000; n++) { /* QADD16 lanes vs clamp16(a + b) */
-        u32 a2, b2, r2;
-        s16 a0, a1, b0, b1;
-        seed = seed * 1664525u + 1013904223u; a2 = seed;
-        seed = seed * 1664525u + 1013904223u; b2 = seed;
-        a0 = (s16)a2, a1 = (s16)(a2 >> 16), b0 = (s16)b2, b1 = (s16)(b2 >> 16);
-        r2 = a2;
-        __asm__("qadd16 %0, %0, %1" : "+r"(r2) : "r"(b2));
-        if ((s16)r2 != clamp16(a0 + b0) || (s16)(r2 >> 16) != clamp16(a1 + b1)) bad++;
-    }
-    PortDbgX("[audio] SIMD self-test mismatches (must be 0)", bad);
-}
-#endif
-
 /* ---- dispatcher: decode the Acmd words exactly as abi.h / synthesis.c encode them --------- */
 
 void PortAudio_RunTask(OSTask* task) {
     const Acmd* cmd;
     u32 n, k;
-    if (task == NULL || task->t.data_ptr == NULL || !sPortAudioUcodeEnable) return;
+    if (task == NULL || task->t.data_ptr == NULL) return;
     cmd = (const Acmd*)task->t.data_ptr;
     n = (u32)(task->t.data_size / sizeof(Acmd));
-#if defined(__3DS__) && defined(__ARM_ARCH_6K__)
-    {
-        static int sTested;
-        if (!sTested) {
-            sTested = 1;
-            PortAudio_SimdSelfTest();
-        }
-    }
-#endif
     if (n > 8192) n = 8192;
     for (k = 0; k < n; k++) {
         u32 w0 = cmd[k].words.w0, w1 = cmd[k].words.w1;

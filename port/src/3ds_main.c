@@ -2119,7 +2119,7 @@ void PortGfx_RunTask(OSTask* task) {
 
 #define ROM_PATH "sdmc:/3ds/mm/baserom-decompressed.z64"
 #define LOG_PATH "sdmc:/3ds/mm/boot.log"
-int gPortMmAudio; /* 1 when built with PORT_MM_AUDIO: the audio pump (ultra_shims.c) runs */
+int gPortMmAudio;
 
 static void boot_flush(void) {
     gfxFlushBuffers();
@@ -2503,28 +2503,19 @@ int main(int argc, char** argv) {
     PortDbgX("after Main: linear free", (unsigned)linearSpaceFree());
 #endif
 
-    /* Audio isn't initialized on 3DS (audio thread never runs), so the SFX bank
-     * link-lists are garbage and any Audio_StopSfxById/etc. walk spins forever.
-     * Audio_ResetSfx() is CPU-side only (resets gSfxBanks to empty) and makes
-     * all the SFX functions safe until real audio lands. */
-    { extern void AudioSfx_Reset(void); AudioSfx_Reset(); Log("AudioSfx_Reset (sfx banks) done"); } /* (MM name) */
-    /* Point gAudioCtx table pointers at the native compiled tables so direct game
-     * reads (e.g. fanfare -> AudioLoad_GetFontsForSequence) can't NULL-deref. */
-    /* PORT MM TODO (audio bring-up): OoT ran Audio_PortInitTables() here (an OoT game-side patch) */
-    /* Real audio bring-up: Audio_Init (AudioLoad_Init) sets up the audio heap and
-     * loads the spec, which sets audioBufferParameters.specUnk4 (nonzero). Without
-     * it AudioThread_Update's task path is gated off (specUnk4==0) so no synthesis
-     * task is ever built. DMA handler defaults to osEPiStartDma (port-routed). */
-#ifdef PORT_MM_AUDIO
-    { extern void Audio_Init(void); extern void Audio_InitSound(void);
-      Audio_Init(); Log("Audio_Init done");
-      Audio_InitSound(); Log("Audio_InitSound done"); }
-    gPortMmAudio = 1;
-#else
-    /* PORT MM TODO (audio bring-up): audio is off until MM's synthesis is ported - in Azahar it reads and writes
-     * unmapped memory (fatal on hardware). Build with PORT_EXTRA=-DPORT_MM_AUDIO to try it. */
-    Log("audio off (PORT_MM_AUDIO not set)");
-#endif
+    {
+        extern int Port3ds_AudioReady(void);
+        extern void PortAudio_Init(void);
+        extern void AudioSfx_Reset(void);
+        if (Port3ds_AudioReady()) {
+            PortAudio_Init();
+            gPortMmAudio = 1;
+            Log("[audio] MM audio engine initialized");
+        } else {
+            AudioSfx_Reset();
+            Log("[audio] MM audio disabled: DSP output unavailable");
+        }
+    }
 
     Port3ds_TouchUiInit(); /* boot finished: the bottom screen becomes the control panel */
 #ifndef PORT_LOG_SYNC /* (debug: PORT_EXTRA=-DPORT_LOG_SYNC keeps every line written at once, for crash hunting) */

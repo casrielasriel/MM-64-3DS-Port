@@ -242,11 +242,9 @@ void Port3ds_PumpInput(void) {
 #include "regs.h"
 #include "global.h" /* PORT: was OoT audio.h */
 extern AudioMgr sAudioMgr;                         /* global instance in main.c */
-extern void AudioMgr_HandleRetrace(AudioMgr* audioMgr);
-extern void PortDbgX(const char* label, unsigned val);
 static void Port3ds_PumpAudio_impl(void);
 void Port3ds_PumpAudio(void) {
-    extern int gPortMmAudio; /* PORT MM TODO (audio bring-up): off until MM's audio is ported */
+    extern int gPortMmAudio;
     if (!gPortMmAudio) {
         return;
     }
@@ -260,39 +258,34 @@ void Port3ds_PumpAudio(void) {
     gPortProf = prev;
     }
 }
+void PortAudio_Init(void) {
+    Audio_Init();
+    AudioLoad_SetDmaHandler(DmaMgr_AudioDmaHandler);
+    Audio_InitSound();
+    osSendMesg(&sAudioMgr.lockQueue, NULL, OS_MESG_NOBLOCK);
+}
+
 static void Port3ds_PumpAudio_impl(void) {
-    /* The threadless port never runs cic6105/AudioMgr_ThreadEntry which set this
-     * to ALL, so it can be stuck inhibiting audio updates. Force ALL each frame. */
-#if 0 /* PORT MM TODO: OoT's audio-manager activity level; MM's AudioMgr has no such register */
-    R_AUDIOMGR_ACTIVITY_LEVEL = AUDIOMGR_ACTIVITY_LEVEL_ALL;
-#endif
-    /* Flush the game's queued audio commands to the audio thread each frame.
-     * Normally Audio_Update does this, but a scene audio-reset sets D_80133418=1
-     * which blocks Audio_Update's body -> the reset command never flushes ->
-     * never acks -> deadlock. Flushing here lets AudioThread_Update process the
-     * reset so it acks (func_800E5EDC) and clears D_80133418, unblocking audio. */
-    /* Break the spec-reset handshake deadlock: func_800F71BC (scene audio reset)
-     * sets D_80133418=1 and waits for func_800E5EDC's ack (a message on
-     * audioResetQueueP with the matching specId), which the free-running audio
-     * thread would post on reset completion. The synchronous port's reset already
-     * completed (resetStatus=0), so post the ack ourselves when a wait is pending.
-     * This lets func_800FAD34 clear the flag AND run func_800F7170 (restart SFX +
-     * unmute), which force-clearing the flag would skip. */
-#if 0 /* PORT MM TODO (audio bring-up): OoT's reset handshake flag; find MM's equivalent */
-    { extern unsigned char D_80133418;
-      if (D_80133418 != 0) {
-          osSendMesg(gAudioCtx.audioResetQueueP, (OSMesg)(unsigned)gAudioCtx.specId, OS_MESG_NOBLOCK);
-      } }
-#endif
-    /* NOTE: do NOT flush cmds here - Audio_Update (now unblocked) owns the
-     * ScheduleProcessCmds flush; a second flush corrupts the read-pos/STOP state. */
-    {
-        extern u64 gPortPerfAudioMain;
-        extern u64 svcGetSystemTick(void);
-        u64 t0 = svcGetSystemTick();
-        AudioMgr_HandleRetrace(&sAudioMgr);
-        gPortPerfAudioMain += svcGetSystemTick() - t0; /* engine + any wait for the previous task */
+    extern void Port3ds_AudioTaskRun(void* task);
+    extern void Port3ds_AudioTaskWait(void);
+    extern u64 gPortPerfAudioMain;
+    extern u64 svcGetSystemTick(void);
+    AudioTask* previous = R_AUDIOMGR_DEBUG_LEVEL > 0 ? NULL : sAudioMgr.rspTask;
+    AudioTask* next;
+    u64 start = svcGetSystemTick();
+
+    if (previous != NULL) {
+        Port3ds_AudioTaskRun(&previous->task);
     }
+    next = R_AUDIOMGR_DEBUG_LEVEL >= 2 ? NULL : AudioThread_Update();
+    if (previous != NULL) {
+        Port3ds_AudioTaskWait();
+        if (previous->taskQueue != NULL) {
+            osSendMesg(previous->taskQueue, NULL, OS_MESG_NOBLOCK);
+        }
+    }
+    sAudioMgr.rspTask = next;
+    gPortPerfAudioMain += svcGetSystemTick() - start;
 }
 
 /* Rumble + Controller Pak: absent hardware */

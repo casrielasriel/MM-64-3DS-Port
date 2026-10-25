@@ -92,7 +92,11 @@ s32 osEPiStartDma(OSPiHandle* h, OSIoMesg* mb, s32 direction) {
 /* ------------------------------------------------------------------ */
 /* AI — audio DAC interface; real output lands with the audio backend. */
 
-/* osAiSetNextBuffer is provided by the game's own src/audio/internal/os.c. */
+s32 osAiSetNextBuffer(void* buffer, u32 size) {
+    extern void Port3ds_AudioSubmit(const s16* samples, int frames);
+    Port3ds_AudioSubmit(buffer, size / (2 * sizeof(s16)));
+    return 0;
+}
 static u32 sAiFreq = 32000;
 s32 osAiSetFrequency(u32 freq) { sAiFreq = freq; return freq; }
 /* bytes still queued for playback (N64: left in the current AI DMA); drives the engine's
