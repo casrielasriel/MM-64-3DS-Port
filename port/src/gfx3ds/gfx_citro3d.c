@@ -1526,9 +1526,9 @@ static void gfx_citro3d_setup_mode(int gpu) {
         AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);         // v1 = texcoord 0
         AttrInfo_AddLoader(attrInfo, 2, GPU_UNSIGNED_BYTE, 4); // v2 = shade 0..255
         AttrInfo_AddLoader(attrInfo, 3, GPU_FLOAT, 2);         // v3 = texcoord 1
-        AttrInfo_AddLoader(attrInfo, 4, GPU_UNSIGNED_BYTE, 1); // v4 = palette index
+        AttrInfo_AddLoader(attrInfo, 4, GPU_UNSIGNED_BYTE, 4); // v4 = palette index + padding
         AttrInfo_AddLoader(attrInfo, 5, GPU_FLOAT, 4);         // v5 = skinned delta; w = 1: fog precomputed
-        /* buffer order: pos(v0) uv0(v1) uv1(v3) dpos(v5) shade(v2) idx(v4); the stride covers the 3 spare bytes */
+        /* buffer order: pos(v0) uv0(v1) uv1(v3) dpos(v5) shade(v2) idx/pad(v4) */
         BufInfo_Add(bufInfo, sVboBuffer, GPU_STRIDE, 6, 0x425310);
         sAttrGpu = *attrInfo; /* (the raw path switches back to these) */
         sBufGpu = *bufInfo;
