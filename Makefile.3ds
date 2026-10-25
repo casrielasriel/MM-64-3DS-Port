@@ -86,6 +86,8 @@ AUDIO_NATIVE_INPUTS := $(addprefix src/audio/lib/,$(addsuffix .c,load playback t
                        src/audio/code_8019AF00.c
 AUDIO_NATIVE_SRCS := $(addprefix $(BUILD)/native_audio/,$(notdir $(AUDIO_NATIVE_INPUTS)))
 AUDIO_NATIVE_OBJS := $(AUDIO_NATIVE_SRCS:.c=.o)
+HUD_NATIVE_NAMES := z_parameter z_map_exp z_map_disp z_kaleido_setup
+HUD_NATIVE_OBJS := $(addprefix $(BUILD)/src/code/,$(addsuffix .o,$(HUD_NATIVE_NAMES)))
 GAME_DECOMP := $(filter-out $(AUDIO_NATIVE_INPUTS) src/audio/lib/aisetnextbuf.c,$(GAME_DECOMP))
 
 PORT_GAME_SRCS := \
@@ -181,6 +183,24 @@ $(BUILD)/native_audio/%.c: src/audio/%.c tools/port/gen_native_audio.py port/inc
 
 $(AUDIO_NATIVE_OBJS): %.o: %.c
 	$(CC) $(CC_FLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD)/native_hud/%.c: src/code/%.c tools/port/gen_native_hud.py tools/port/gen_native_audio.py port/include/port_minimap.h
+	@mkdir -p $(dir $@)
+	python3 tools/port/gen_native_hud.py $< $@
+
+$(HUD_NATIVE_OBJS): $(BUILD)/src/code/%.o: $(BUILD)/native_hud/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CC_FLAGS) -Isrc/code -MMD -MP -c -o $@ $<
+
+$(BUILD)/native_player/z_player.c: src/overlays/actors/ovl_player_actor/z_player.c \
+    tools/port/gen_native_player.py tools/port/gen_native_audio.py port/include/port_minimap.h
+	@mkdir -p $(dir $@)
+	python3 tools/port/gen_native_player.py $< $@
+
+$(BUILD)/src/overlays/actors/ovl_player_actor/z_player.o: $(BUILD)/native_player/z_player.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CC_FLAGS) -Isrc/overlays/actors/ovl_player_actor -MMD -MP -c -o $@ $<
+	$(OBJCOPY) --rename-section .data=ovld_ovl_player_actor --rename-section .bss=ovlb_ovl_player_actor $@
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)

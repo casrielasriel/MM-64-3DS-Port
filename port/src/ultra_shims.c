@@ -295,37 +295,126 @@ s32 __osMotorAccess(OSPfs* pfs, s32 flag) { (void)pfs; (void)flag; return 1; }
 /* PORT (2026-09-29): touch panel state (3ds_main.c draws it; see port_minimap.h and
  * docs/3ds-touch-panel.md). The game side fills gPortMinimap / gPortHud*; the input side sets the
  * gPortTouch* one-shot requests that z_player.c consumes. */
-#include "global.h" /* PORT: was OoT save.h */
-#include "global.h" /* PORT: was OoT item.h */
 #include "port_minimap.h"
-#include "global.h" /* PORT: was OoT inventory.h */
-#include "global.h" /* PORT: was OoT interface.h */
-#include "global.h" /* PORT: was OoT dma.h */
 #include "segment_symbols.h"
+#include "sys_cmpdma.h"
 PortMinimap gPortMinimap;
 int gPortMinimapOnBottom = 1;
 const unsigned char* gPortHudIconSeg;
 unsigned int gPortHudSerial;
 int gPortHudKeys = -1;
-int gPortHudNavi;
+int gPortHudTatl;
 int gPortHudTop = 1;
-volatile int gPortTouchOcarina, gPortTouchBoots;
+volatile int gPortTouchOcarina;
 volatile int gPortTouchPage = -1;
+static PortHudInfo sHudInfo;
+static u8 sHudIcons[4 * ICON_ITEM_TEX_SIZE] __attribute__((aligned(8)));
+static const u8* sHudIconSource;
 
-/* PORT MM TODO: the touch panel's game state (rupees, hearts, magic, C items) - OoT's save layout was read here;
- * MM's (gSaveContext.save.saveInfo.playerData, masks, the three-day clock) comes with the MM touch screen. Until then the
- * panel shows no game state. */
-void Port_GetHudInfo(PortHudInfo* h) {
+void PortHud_Update(PlayState* play) {
+    PortHudInfo* h = &sHudInfo;
+    SavePlayerData* data = &gSaveContext.save.saveInfo.playerData;
+    Player* player = GET_PLAYER(play);
+    u8 previousItems[3];
     int i;
+    memcpy(previousItems, h->cItem, sizeof(previousItems));
     memset(h, 0, sizeof(*h));
-    h->rupees = h->keys = -1;
-    h->ocarina = ITEM_NONE;
-    for (i = 0; i < 3; i++) h->cItem[i] = ITEM_NONE, h->cDisabled[i] = 1, h->cAmmo[i] = -1;
+    h->valid = gSaveContext.gameMode == GAMEMODE_NORMAL;
+    h->health = data->health;
+    h->healthCapacity = data->healthCapacity;
+    h->magic = data->magic;
+    h->magicCapacity = data->isMagicAcquired ? (data->isDoubleMagicAcquired ? 96 : 48) : 0;
+    h->rupees = data->rupees;
+    h->keys = -1;
+    switch (play->sceneId) {
+        case SCENE_INISIE_N:
+        case SCENE_INISIE_R:
+        case SCENE_MITURIN:
+        case SCENE_HAKUGIN:
+        case SCENE_SEA:
+            h->keys = DUNGEON_KEY_COUNT(gSaveContext.mapIndex);
+            break;
+    }
+    h->ocarina = INV_CONTENT(ITEM_OCARINA_OF_TIME);
+    h->mask = player->currentMask == PLAYER_MASK_NONE ? ITEM_NONE : Player_MaskIdToItemId(player->currentMask - 1);
+    h->day = gSaveContext.save.day;
+    h->minutes = ((u32)CURRENT_TIME * 1440) >> 16;
+    for (i = 0; i < 3; i++) {
+        int item = GET_CUR_FORM_BTN_ITEM(i + EQUIP_SLOT_C_LEFT);
+        h->cItem[i] = item;
+        if (item < ITEM_F0 && (item != previousItems[i] || sHudIconSource != play->interfaceCtx.iconItemSegment)) {
+            memcpy(sHudIcons + (i + 1) * ICON_ITEM_TEX_SIZE,
+                   play->interfaceCtx.iconItemSegment + (i + 1) * ICON_ITEM_TEX_SIZE, ICON_ITEM_TEX_SIZE);
+        }
+        h->cDisabled[i] = gSaveContext.buttonStatus[i + EQUIP_SLOT_C_LEFT] == BTN_DISABLED;
+        h->cAmmo[i] = -1;
+        if (item >= ITEM_BOW_FIRE && item <= ITEM_BOW_LIGHT) {
+            item = ITEM_BOW;
+        }
+        switch (item) {
+            case ITEM_DEKU_STICK:
+            case ITEM_DEKU_NUT:
+            case ITEM_BOMB:
+            case ITEM_BOW:
+            case ITEM_BOMBCHU:
+            case ITEM_POWDER_KEG:
+            case ITEM_MAGIC_BEANS:
+                h->cAmmo[i] = AMMO(item);
+                break;
+            case ITEM_PICTOGRAPH_BOX:
+                h->cAmmo[i] = CHECK_QUEST_ITEM(QUEST_PICTOGRAPH) != 0;
+                break;
+        }
+    }
+    sHudIconSource = play->interfaceCtx.iconItemSegment;
+    gPortHudIconSeg = sHudIcons;
+    gPortHudKeys = h->keys;
+    gPortHudTatl = play->interfaceCtx.tatlCalling;
+    gPortHudSerial++;
+    gPortTouchPage = -1;
 }
 
-/* 32x32 RGBA32 icon for any item id (icon_item_static), read from ROM once and cached; NULL if out of
- * range. For panel buttons whose item is not on a C button (boots, ocarina). Game thread only. */
+void Port_GetHudInfo(PortHudInfo* h) {
+    *h = sHudInfo;
+    if (gPortHudSerial == 0) {
+        memset(h, 0, sizeof(*h));
+        h->rupees = h->keys = -1;
+        h->ocarina = ITEM_NONE;
+        h->mask = ITEM_NONE;
+    }
+}
+
 const unsigned char* Port_GetItemIcon(int itemId) {
-    (void)itemId; /* PORT MM TODO: MM's item icons (icon_item_static) for the touch panel */
-    return NULL;
+    static u64 icons[2][ICON_ITEM_TEX_SIZE / sizeof(u64)];
+    static int ids[2] = { -1, -1 };
+    int slot = itemId == ITEM_OCARINA_OF_TIME ? 0 : 1;
+    if (itemId < 0 || itemId > ITEM_MASK_GIANT) {
+        return NULL;
+    }
+    if (ids[slot] != itemId) {
+        CmpDma_LoadFile(SEGMENT_ROM_START(icon_item_static_yar), itemId, icons[slot], ICON_ITEM_TEX_SIZE);
+        ids[slot] = itemId;
+    }
+    return (const unsigned char*)icons[slot];
+}
+
+void PortMap_Begin(int sceneId) {
+    gPortMinimap.serial++;
+    gPortMinimap.sceneId = sceneId;
+    gPortMinimap.numLayers = gPortMinimap.numMarks = 0;
+    gPortMinimap.compass = gPortMinimap.hasStart = 0;
+}
+
+void PortMap_AddMark(int type, int x, int y, int r, int g, int b) {
+    int i = gPortMinimap.numMarks;
+    if (i == PORT_MINIMAP_MAX_MARKS) {
+        return;
+    }
+    gPortMinimap.markType[i] = type;
+    gPortMinimap.markX[i] = x;
+    gPortMinimap.markY[i] = y;
+    gPortMinimap.markR[i] = r;
+    gPortMinimap.markG[i] = g;
+    gPortMinimap.markB[i] = b;
+    gPortMinimap.numMarks++;
 }

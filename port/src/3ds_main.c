@@ -287,14 +287,6 @@ static void Port3ds_LoadSettings(void) {
     fclose(f);
 }
 
-/* PORT (2026-09-30): touch panel on the bottom screen, drawn straight into its RGB565
- * framebuffer (single-buffered by consoleInit; stdout/stderr are silenced once the panel is up).
- *   left:   VIEW (C-up: first person / Navi), rupees, small keys, SCREEN (4:3 / wide), OCARINA
- *   centre: hearts + magic, the minimap (software-drawn from gPortMinimap, port_minimap.h),
- *           tabs GEAR / MAP / ITEMS (START straight to that pause page)
- *   right:  C-left (Y), C-down (I; ZL on a New 3DS), C-right (X) with live item icons + ammo, BOOTS (cycles owned
- *           boots; ZR on a New 3DS)
- * Everything redraws only when it changes. Full description: docs/3ds-touch-panel.md. */
 #include "port_minimap.h"
 extern const unsigned char* Port_GetItemIcon(int itemId);
 extern int gPortWidescreen;
@@ -308,17 +300,14 @@ static int sFbDirty;
 #define COL_SHADOW PRGB(20, 20, 24)
 #define COL_DIM    PRGB(196, 198, 206) /* "not available": still readable on the stone plates (130 was not, v42) */
 
-/* item ids used by the panel (include/item.h) */
-#define PANEL_ITEM_OCARINA_FAIRY   0x07
-#define PANEL_ITEM_OCARINA_OF_TIME 0x08
-#define PANEL_ITEM_BOOTS_KOKIRI    0x44
+#define PANEL_ITEM_OCARINA_OF_TIME 0x00
 
-enum { P_VIEW, P_SCREEN, P_HUD, P_OCARINA, P_CLEFT, P_CDOWN, P_CRIGHT, P_BOOTS, P_GEAR, P_MAP, P_ITEMS, P_COUNT };
+enum { P_VIEW, P_SCREEN, P_HUD, P_OCARINA, P_CLEFT, P_CDOWN, P_CRIGHT, P_MASKS, P_QUEST, P_MAP, P_ITEMS, P_COUNT };
 typedef struct {
     s16 x, y, w, h;
     const char* label;
     u16 btn;  /* N64 bits while held; 0 = tap action */
-    s8 page;  /* pause page for the tabs (PAUSE_ITEM 0, MAP 1, EQUIP 3), -1 otherwise */
+    s8 page;
     u8 tr, tg, tb; /* tab face colour (0,0,0 = stone) */
 } PanelPad;
 static const PanelPad sPads[P_COUNT] = {
@@ -329,16 +318,16 @@ static const PanelPad sPads[P_COUNT] = {
     { 260, 4, 56, 56, "Y", BTN_CLEFT_, -1, 0, 0, 0 },
     { 260, 64, 56, 56, "I", BTN_CDOWN_, -1, 0, 0, 0 }, /* touch item slot I (+ ZL / D-pad down) */
     { 260, 124, 56, 56, "X", BTN_CRIGHT_, -1, 0, 0, 0 },
-    { 260, 184, 56, 52, "BOOTS", 0, -1, 0, 0, 0 },
-    { 66, 208, 60, 30, "GEAR", BTN_START_, 3, 52, 116, 60 },
+    { 260, 184, 56, 52, "MASKS", BTN_START_, 3, 0, 0, 0 },
+    { 66, 208, 60, 30, "QUEST", BTN_START_, 2, 52, 116, 60 },
     { 130, 208, 60, 30, "MAP", BTN_START_, 1, 140, 44, 48 },
     { 194, 208, 60, 30, "ITEMS", BTN_START_, 0, 48, 72, 150 },
 };
 /* centre column */
 #define MAP_X 66
-#define MAP_Y 34
+#define MAP_Y 52
 #define MAP_W 188
-#define MAP_H 170
+#define MAP_H 152
 
 static inline void Px(int x, int y, u16 c) {
     if ((unsigned)x < 320 && (unsigned)y < 240) sFb[x * 240 + (239 - y)] = c;
@@ -466,7 +455,7 @@ static void DrawIcon(int x, int y, const u8* rgba, int size, int dim) {
      * (Kokiri boots 2 right, bomb 1 right: visibly off on the plates, 2026-10-03) */
     for (j = 0; j < 32; j++) {
         for (i = 0; i < 32; i++) {
-            if (rgba[(((j * 32 + i) * 4) + 3) ^ 7] != 0) {
+            if (rgba[(((j * 32 + i) * 4) + 3)] != 0) {
                 x0 = i < x0 ? i : x0, x1 = i > x1 ? i : x1;
                 y0 = j < y0 ? j : y0, y1 = j > y1 ? j : y1;
             }
@@ -477,9 +466,8 @@ static void DrawIcon(int x, int y, const u8* rgba, int size, int dim) {
     y += RoundDiv((32 - (y0 + y1 + 1)) * size, 64);
     for (j = 0; j < size; j++) {
         for (i = 0; i < size; i++) {
-            /* game RAM keeps logical byte k at address k ^ 7 on the 3DS (see gfx_src_swizzle) */
             int o = ((j * 32 / size) * 32 + (i * 32 / size)) * 4;
-            int r = rgba[o ^ 7], g = rgba[(o + 1) ^ 7], b = rgba[(o + 2) ^ 7], a = rgba[(o + 3) ^ 7];
+            int r = rgba[o], g = rgba[o + 1], b = rgba[o + 2], a = rgba[o + 3];
             if (a == 0) continue;
             if (dim) r = g = b = (r + g + b) / 6;
             Px(x + i, y + j, Blend565(PxGet(x + i, y + j), r, g, b, a));
@@ -490,8 +478,8 @@ static void DrawIcon(int x, int y, const u8* rgba, int size, int dim) {
 /* ---- panel state (what is on screen) ---- */
 static int sHeldPad = -1;
 static PortHudInfo sShown;
-static int sShownWide = -1, sShownIconsOk = -1, sShownNavi, sShownHud = -1;
-static int sNaviPulse; /* the NAVI pad's phase while Navi calls (1: green) */
+static int sShownWide = -1, sShownIconsOk = -1, sShownTatl, sShownHud = -1;
+static int sTatlPulse;
 static const u8* sShownIconSeg;
 static unsigned sLastHudSerial, sLastMapSerial;
 static int sHudStale = 99, sMapStale = 99;
@@ -507,7 +495,7 @@ static void DrawPad(int i) {
     DrawPlate(p, i == sHeldPad);
     if (i >= P_CLEFT && i <= P_CRIGHT) {
         int c = i - P_CLEFT;
-        if (sShown.cItem[c] < 0x56 && IconsOk()) {
+        if (sShown.cItem[c] < 0xF0 && IconsOk()) {
             DrawIcon(cx - 22, p->y + 5, gPortHudIconSeg + (c + 1) * 32 * 32 * 4, 44, sShown.cDisabled[c]);
             if (sShown.cAmmo[c] >= 0) {
                 snprintf(buf, sizeof(buf), "%d", sShown.cAmmo[c]);
@@ -519,27 +507,24 @@ static void DrawPad(int i) {
          * down presses it too), and the New 3DS adds a "ZL" tag (2026-10-03: ZL alone meant nothing on an Old 3DS) */
         DrawText(p->x + 4, p->y + 4, p->label, PRGB(255, 230, 120));
         if (c == 1 && sTouchUiN3ds) DrawText(p->x + p->w - 4 - 16, p->y + 4, "ZL", PRGB(200, 204, 214));
-    } else if (i == P_BOOTS) {
-        if (sShown.boots >= 1 && sShown.boots <= 3) {
-            DrawIcon(cx - 20, p->y + 3, Port_GetItemIcon(PANEL_ITEM_BOOTS_KOKIRI + sShown.boots - 1), 40, 0);
+    } else if (i == P_MASKS) {
+        if (sShown.valid && sShown.mask != 0xFF) {
+            DrawIcon(cx - 20, p->y + 3, Port_GetItemIcon(sShown.mask), 40, 0);
         }
-        DrawTextC(cx, p->y + p->h - 12, "BOOTS", COL_TEXT);
+        DrawTextC(cx, p->y + p->h - 12, "MASKS", COL_TEXT);
         if (sTouchUiN3ds) DrawText(p->x + p->w - 4 - 16, p->y + 4, "ZR", PRGB(200, 204, 214)); /* ZR presses it */
     } else if (i == P_OCARINA) {
-        int have = sShown.ocarina == PANEL_ITEM_OCARINA_FAIRY || sShown.ocarina == PANEL_ITEM_OCARINA_OF_TIME;
+        int have = sShown.valid && sShown.ocarina == PANEL_ITEM_OCARINA_OF_TIME;
         if (have) DrawIcon(cx - 20, p->y + 3, Port_GetItemIcon(sShown.ocarina), 40, 0);
         DrawTextC(cx, p->y + p->h - 12, "OCARINA", have ? COL_TEXT : COL_DIM);
-    } else if (i == P_VIEW && sShownNavi) {
-        /* Navi wants to talk (the VIEW eye gives way to her): a glowing fairy, "NAVI". PORT (2026-10-05): it pulses
-         * - blue, then green with a bright frame (she turns green when she has something to say) - so it is noticed
-         * with the top-screen HUD off, where the "Navi" label on C-up is not shown */
-        int fy = p->y + 20, dx, dy, green = sNaviPulse;
-        int gr = green ? 120 : 120, gg = green ? 255 : 200, gb = green ? 150 : 255;
+    } else if (i == P_VIEW && sShownTatl) {
+        int fy = p->y + 20, dx, dy, green = sTatlPulse;
+        int gr = 255, gg = green ? 235 : 210, gb = green ? 120 : 160;
         if (green) {
-            FillRect(p->x + 2, p->y + 2, p->w - 4, 2, PRGB(140, 255, 150));
-            FillRect(p->x + 2, p->y + p->h - 4, p->w - 4, 2, PRGB(140, 255, 150));
-            FillRect(p->x + 2, p->y + 2, 2, p->h - 4, PRGB(140, 255, 150));
-            FillRect(p->x + p->w - 4, p->y + 2, 2, p->h - 4, PRGB(140, 255, 150));
+            FillRect(p->x + 2, p->y + 2, p->w - 4, 2, PRGB(255, 225, 120));
+            FillRect(p->x + 2, p->y + p->h - 4, p->w - 4, 2, PRGB(255, 225, 120));
+            FillRect(p->x + 2, p->y + 2, 2, p->h - 4, PRGB(255, 225, 120));
+            FillRect(p->x + p->w - 4, p->y + 2, 2, p->h - 4, PRGB(255, 225, 120));
         }
         for (dy = -16; dy <= 16; dy++) {
             for (dx = -24; dx <= 24; dx++) {
@@ -557,7 +542,7 @@ static void DrawPad(int i) {
                 if (d2 <= 16) Px(cx + dx, fy + dy, PRGB(250, 255, 255));
             }
         }
-        DrawTextC(cx, p->y + p->h - 13, "NAVI", green ? PRGB(160, 255, 160) : PRGB(150, 220, 255));
+        DrawTextC(cx, p->y + p->h - 13, "TATL", green ? PRGB(255, 235, 130) : PRGB(250, 240, 200));
     } else if (i == P_VIEW) {
         /* an eye: the VIEW button */
         int ey = p->y + 21, dx, dy;
@@ -611,6 +596,12 @@ static void DrawStatus(void) {
             FillRect(MAP_X + 5, 24, w + 2, 6, PRGB(230, 230, 230));
             FillRect(MAP_X + 6, 25, w, 4, PRGB(20, 20, 20));
             FillRect(MAP_X + 6, 25, f, 4, PRGB(40, 200, 60));
+        }
+        if (sShown.day >= 1 && sShown.day <= 3) {
+            char clock[24];
+            snprintf(clock, sizeof(clock), "DAY %d  %02d:%02d", sShown.day,
+                     sShown.minutes / 60, sShown.minutes % 60);
+            DrawTextC(MAP_X + MAP_W / 2, 37, clock, COL_TEXT);
         }
     }
     sFbDirty = 1;
@@ -692,16 +683,18 @@ static void MapTri(float cx, float cy, short yaw, float size, u16 col) {
     }
 }
 
-static int MapTexel(const PortMinimap* m, int tx, int ty, int* lum) { /* alpha 0..255 */
+static int MapTexel(const PortMinimapLayer* m, int tx, int ty, int* lum) {
     const u8* t = m->tex;
+    if (m->flipX) tx = m->w - 1 - tx;
+    if (m->flipY) ty = m->h - 1 - ty;
     int idx = ty * m->w + tx;
-    int nib = (t[(idx >> 1) ^ 7] >> ((idx & 1) ? 0 : 4)) & 0xF; /* byte k at k ^ 7 */
-    if (m->fmt == PORT_MINIMAP_I4) {
-        *lum = 255;
-        return nib * 17;
+    int nib = (t[(idx >> 1) ^ m->byteXor] >> ((idx & 1) ? 0 : 4)) & 0xF;
+    if (m->fmt != PORT_MINIMAP_IA4) {
+        *lum = m->fmt == PORT_MINIMAP_I4_ALPHA ? 255 : nib * 17;
+        return nib * 17 * m->a / 255;
     }
     *lum = (nib >> 1) * 255 / 7;
-    return (nib & 1) ? 255 : 0;
+    return (nib & 1) ? m->a : 0;
 }
 
 static void DrawMapInto(int have);
@@ -736,6 +729,26 @@ static u32 sMapBaseKey;
 static int sMapBaseValid;
 static float sMapBaseS, sMapBaseOx, sMapBaseOy;
 
+static u32 MapKey(int have) {
+    const PortMinimap* m = &gPortMinimap;
+    u32 key = have ? (u32)m->sceneId + 1 : 0;
+    if (!have) return key;
+    for (int i = 0; i < m->numLayers; i++) {
+        const PortMinimapLayer* layer = &m->layers[i];
+        key = key * 33u + (u32)(uintptr_t)layer->tex;
+        key = key * 33u + (u16)layer->x + ((u32)(u16)layer->y << 16);
+        key = key * 33u + layer->w + ((u32)layer->h << 16);
+        key = key * 33u + layer->fmt + layer->flipX * 8u + layer->flipY * 16u + layer->byteXor * 32u;
+        key = key * 33u + layer->r + ((u32)layer->g << 8) + ((u32)layer->b << 16) + ((u32)layer->a << 24);
+        const u8* tex = layer->tex;
+        int n = (layer->w * layer->h + 1) / 2;
+        for (int k = 0; k < 64; k++) {
+            key = key * 33u + tex[(k * n / 64) ^ layer->byteXor];
+        }
+    }
+    return key;
+}
+
 static void MapCopyColumns(u16* dst, const u16* src) {
     int x;
     for (x = MAP_X; x < MAP_X + MAP_W; x++) {
@@ -750,13 +763,7 @@ static void DrawMapInto(int have) {
     const PortMinimap* m = &gPortMinimap;
     float s, ox, oy;
     int x;
-    u32 key = (u32)have * 0x9E3779B1u ^ (u32)(uintptr_t)m->tex * 31u ^ (u32)m->w * 7u ^ (u32)m->h * 13u ^
-              (u32)m->r * 29u ^ (u32)m->g * 37u ^ (u32)m->b * 41u;
-    if (have && m->tex != NULL && m->w > 0 && m->h > 0) { /* same buffer, new room: sample the texels */
-        const u8* t = m->tex;
-        int n = m->w * m->h / 2, k;
-        for (k = 0; k < 64; k++) key = key * 33u + t[(k * (n / 64)) ^ 7];
-    }
+    u32 key = MapKey(have);
     if (!sMapBaseValid || key != sMapBaseKey) {
         DrawMapBase(have, &sMapBaseS, &sMapBaseOx, &sMapBaseOy);
         MapCopyColumns(sMapBase, sFb);
@@ -766,30 +773,26 @@ static void DrawMapInto(int have) {
         MapCopyColumns(sFb, sMapBase);
     }
     sFbDirty = 1;
-    if (!have || m->w <= 0 || m->h <= 0) return;
+    if (!have) return;
     s = sMapBaseS, ox = sMapBaseOx, oy = sMapBaseOy;
-#define MX(v) (ox + ((v) - m->x) * s)
-#define MY(v) (oy + ((v) - m->y) * s)
-    for (x = 0; x < m->numIcons; x++) {
-        int ix = (int)MX(m->iconX[x]), iy = (int)MY(m->iconY[x]);
-        FillRect(ix, iy, 8, 8, PRGB(60, 30, 20));
-        FillRect(ix + 1, iy + 1, 6, 6, PRGB(220, 70, 40));
-    }
+#define MX(v) (ox + (v) * s)
+#define MY(v) (oy + (v) * s)
     for (x = 0; x < m->numMarks; x++) {
         int mx = (int)MX(m->markX[x]), my = (int)MY(m->markY[x]);
         if (m->markType[x] == 0 /* MAP_MARK_CHEST */) {
             FillRect(mx, my, 9, 7, PRGB(70, 36, 16));
             FillRect(mx + 1, my + 1, 7, 5, PRGB(210, 60, 40));
             FillRect(mx + 1, my + 3, 7, 1, PRGB(240, 200, 60));
-        } else { /* boss */
-            FillRect(mx, my, 9, 9, PRGB(30, 20, 20));
-            FillRect(mx + 1, my + 1, 7, 7, PRGB(240, 240, 240));
-            FillRect(mx + 2, my + 3, 2, 2, PRGB(200, 20, 20));
-            FillRect(mx + 5, my + 3, 2, 2, PRGB(200, 20, 20));
+        } else {
+            int size = m->markType[x] == 2 ? 4 : 3;
+            FillRect(mx - size / 2, my - size / 2, size, size,
+                     PRGB(m->markR[x], m->markG[x], m->markB[x]));
         }
     }
-    if (m->compass) {
+    if (m->hasStart) {
         MapTri(MX(m->startX), MY(m->startY), m->startYaw, 7, PRGB(200, 0, 0));
+    }
+    if (m->compass) {
         MapTri(MX(m->playerX), MY(m->playerY), m->playerYaw, 9, PRGB(40, 40, 20));
         MapTri(MX(m->playerX), MY(m->playerY), m->playerYaw, 7, PRGB(250, 240, 0));
     }
@@ -818,39 +821,47 @@ static void DrawMapBase(int have, float* ps, float* pox, float* poy) {
         }
     }
     sFbDirty = 1;
-    if (!have || m->w <= 0 || m->h <= 0) return;
+    if (!have) return;
     /* fit the drawn part of the texture (plus the markers) to the frame: N64 maps sit in a corner of
      * their texture; shown large and centred */
-    bx0 = m->w, by0 = m->h, bx1 = -1, by1 = -1;
-    if (m->tex != NULL) {
-        for (y = 0; y < m->h; y++) {
-            for (x = 0; x < m->w; x++) {
-                if (MapTexel(m, x, y, &lum) != 0) {
-                    if (x < bx0) bx0 = x;
-                    if (x > bx1) bx1 = x;
-                    if (y < by0) by0 = y;
-                    if (y > by1) by1 = y;
+    bx0 = by0 = 0x7FFF;
+    bx1 = by1 = -0x7FFF;
+    for (int i = 0; i < m->numLayers; i++) {
+        const PortMinimapLayer* layer = &m->layers[i];
+        for (y = 0; y < layer->h; y++) {
+            for (x = 0; x < layer->w; x++) {
+                if (MapTexel(layer, x, y, &lum) != 0) {
+                    int px = x + layer->x, py = y + layer->y;
+                    if (px < bx0) bx0 = px;
+                    if (px > bx1) bx1 = px;
+                    if (py < by0) by0 = py;
+                    if (py > by1) by1 = py;
                 }
             }
         }
     }
-    if (bx1 < 0) bx0 = 0, by0 = 0, bx1 = m->w - 1, by1 = m->h - 1; /* nothing drawn: whole frame */
+    if (bx1 < bx0 || by1 < by0) {
+        bx0 = (int)m->playerX - 32;
+        by0 = (int)m->playerY - 32;
+        bx1 = bx0 + 63;
+        by1 = by0 + 63;
+    }
     bx1++, by1++;
     s = fminf((MAP_W - 16) / (float)(bx1 - bx0), (MAP_H - 16) / (float)(by1 - by0));
     if (s > 3.0f) s = 3.0f;
     ox = MAP_X + (MAP_W - (bx1 - bx0) * s) * 0.5f - bx0 * s;
     oy = MAP_Y + (MAP_H - (by1 - by0) * s) * 0.5f - by0 * s;
     inv = 1.0f / s;
-    if (m->tex != NULL) {
-        /* the game's colours are for a dark screen: darken them onto the parchment */
-        int r = m->r * 2 / 5, g = m->g * 2 / 5, b = m->b * 2 / 5 + 70;
+    for (int i = 0; i < m->numLayers; i++) {
+        const PortMinimapLayer* layer = &m->layers[i];
+        int r = layer->r * 2 / 5, g = layer->g * 2 / 5, b = layer->b * 2 / 5 + 70;
         for (y = MAP_Y + 2; y < MAP_Y + MAP_H - 2; y++) {
-            int ty = (int)floorf((y + 0.5f - oy) * inv);
-            if (ty < by0 || ty >= by1) continue;
+            int ty = (int)floorf((y + 0.5f - oy) * inv) - layer->y;
+            if (ty < 0 || ty >= layer->h) continue;
             for (x = MAP_X + 2; x < MAP_X + MAP_W - 2; x++) {
-                int tx = (int)floorf((x + 0.5f - ox) * inv), a;
-                if (tx < bx0 || tx >= bx1) continue;
-                a = MapTexel(m, tx, ty, &lum);
+                int tx = (int)floorf((x + 0.5f - ox) * inv) - layer->x, a;
+                if (tx < 0 || tx >= layer->w) continue;
+                a = MapTexel(layer, tx, ty, &lum);
                 if (a == 0) continue;
                 Px(x, y, Blend565(PxGet(x, y), r * lum / 255, g * lum / 255, b * lum / 255, a));
             }
@@ -898,7 +909,6 @@ static unsigned short Port3ds_TouchUiPoll(void) {
     sPolls++;
     sFb = (u16*)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
     if (gPortTouchOcarina > 0) gPortTouchOcarina--; /* requests expire if the player could not act */
-    if (gPortTouchBoots > 0) gPortTouchBoots--;
 
     /* freshness of the game-side data */
     sHudStale = (gPortHudSerial != sLastHudSerial) ? 0 : sHudStale + 1;
@@ -907,7 +917,11 @@ static unsigned short Port3ds_TouchUiPoll(void) {
     sLastMapSerial = gPortMinimap.serial;
 
     Port_GetHudInfo(&now);
-    if (sHudStale >= 4) now.keys = -1; /* the HUD is not being drawn (title, file select) */
+    if (sHudStale >= 4) {
+        now.valid = 0;
+        now.rupees = now.keys = -1;
+        now.ocarina = now.mask = 0xFF;
+    }
 
     if (sTouchUiRedraw) {
         sTouchUiRedraw = 0;
@@ -945,18 +959,18 @@ static unsigned short Port3ds_TouchUiPoll(void) {
         } else if (hit == P_HUD) {
             gPortHudTop = !gPortHudTop;
             Port3ds_SaveSettings();
-        } else if (hit == P_OCARINA) {
+        } else if (hit == P_OCARINA && now.valid && now.ocarina == PANEL_ITEM_OCARINA_OF_TIME) {
             gPortTouchOcarina = 3;
-        } else if (hit == P_BOOTS) {
-            gPortTouchBoots = 3;
         } else if (hit >= 0 && sPads[hit].page >= 0) {
             gPortTouchPage = sPads[hit].page;
         }
     }
-    /* New 3DS: ZR is the BOOTS pad (pressed look while held) */
-    if ((hidKeysDown() | sTapDownAcc) & KEY_ZR) gPortTouchBoots = 3;
+    if ((hidKeysDown() | sTapDownAcc) & KEY_ZR) {
+        gPortTouchPage = 3;
+        if (hit < 0) hit = P_MASKS;
+    }
     sTapDownAcc = 0;
-    if (hit < 0 && (hidKeysHeld() & KEY_ZR)) hit = P_BOOTS;
+    if (hit < 0 && (hidKeysHeld() & KEY_ZR)) hit = P_MASKS;
     if (hit != sHeldPad) {
         int old = sHeldPad;
         sHeldPad = hit;
@@ -977,20 +991,22 @@ static unsigned short Port3ds_TouchUiPoll(void) {
         sShownIconSeg = gPortHudIconSeg;
         for (i = 0; i < 3; i++) DrawPad(P_CLEFT + i);
     }
-    if (now.boots != sShown.boots) sShown.boots = now.boots, DrawPad(P_BOOTS);
-    if (now.ocarina != sShown.ocarina) sShown.ocarina = now.ocarina, DrawPad(P_OCARINA);
+    int validityChanged = now.valid != sShown.valid;
+    sShown.valid = now.valid;
+    if (now.mask != sShown.mask || validityChanged) sShown.mask = now.mask, DrawPad(P_MASKS);
+    if (now.ocarina != sShown.ocarina || validityChanged) sShown.ocarina = now.ocarina, DrawPad(P_OCARINA);
     if (gPortWidescreen != sShownWide) sShownWide = gPortWidescreen, DrawPad(P_SCREEN);
     if (gPortHudTop != sShownHud) sShownHud = gPortHudTop, DrawPad(P_HUD);
     {
-        int navi = gPortHudNavi && sHudStale < 4;
-        static int sNaviPulseT;
-        if (navi != sShownNavi) {
-            sShownNavi = navi;
-            sNaviPulse = 1, sNaviPulseT = 0;
+        int tatl = gPortHudTatl && sHudStale < 4;
+        static int sTatlPulseT;
+        if (tatl != sShownTatl) {
+            sShownTatl = tatl;
+            sTatlPulse = 1, sTatlPulseT = 0;
             DrawPad(P_VIEW);
-        } else if (navi && ++sNaviPulseT >= 8) { /* ~0.4 s per phase */
-            sNaviPulseT = 0;
-            sNaviPulse ^= 1;
+        } else if (tatl && ++sTatlPulseT >= 8) {
+            sTatlPulseT = 0;
+            sTatlPulse ^= 1;
             DrawPad(P_VIEW);
         }
     }
@@ -998,10 +1014,13 @@ static unsigned short Port3ds_TouchUiPoll(void) {
         sShown.rupees = now.rupees, sShown.keys = now.keys;
         DrawCounters();
     }
-    if (now.valid != sShown.valid || now.health != sShown.health || now.healthCapacity != sShown.healthCapacity ||
-        now.magic != sShown.magic || now.magicCapacity != sShown.magicCapacity) {
+    if (validityChanged || now.health != sShown.health || now.healthCapacity != sShown.healthCapacity ||
+        now.magic != sShown.magic || now.magicCapacity != sShown.magicCapacity ||
+        now.day != sShown.day || now.minutes != sShown.minutes) {
         sShown.valid = now.valid, sShown.health = now.health, sShown.healthCapacity = now.healthCapacity;
         sShown.magic = now.magic, sShown.magicCapacity = now.magicCapacity;
+        sShown.day = now.day;
+        sShown.minutes = now.minutes;
         DrawStatus();
     }
 
@@ -1011,17 +1030,18 @@ static unsigned short Port3ds_TouchUiPoll(void) {
         if (sMapStale == 0 && (sPolls & 1)) {
             /* redraw only when something visible changed (arrows move by whole panel pixels) */
             const PortMinimap* m = &gPortMinimap;
-            u32 sig = (u32)(uintptr_t)m->tex * 31u + (u32)m->w * 7u + (u32)m->h * 13u + m->compass * 17u +
+            int have = m->numLayers || m->compass || m->hasStart || m->numMarks;
+            u32 sig = MapKey(have) + m->compass * 17u + m->hasStart * 23u +
                       (u32)(int)(m->playerX * 2.0f) * 101u + (u32)(int)(m->playerY * 2.0f) * 1009u +
                       (u32)(m->playerYaw >> 11) * 10007u + (u32)(int)m->startX * 3u + (u32)(int)m->startY * 5u +
-                      m->numMarks * 19u + m->numIcons * 23u + (u32)m->r * 29u + (u32)m->g * 37u;
-            if (m->tex != NULL && m->w > 0 && m->h > 0) { /* same buffer, new room: sample the texels */
-                const u8* t = m->tex;
-                int n = m->w * m->h / 2, k;
-                for (k = 0; k < 64; k++) sig = sig * 33u + t[(k * (n / 64)) ^ 7];
+                      m->numMarks * 19u + (u32)(u16)m->startYaw * 31u;
+            for (int k = 0; k < m->numMarks; k++) {
+                sig = sig * 33u + (u16)m->markX[k] + ((u32)(u16)m->markY[k] << 16);
+                sig = sig * 33u + m->markType[k] + ((u32)m->markR[k] << 8) +
+                      ((u32)m->markG[k] << 16) + ((u32)m->markB[k] << 24);
             }
             if (!sMapShown || sig != sMapSig) {
-                DrawMap(1);
+                DrawMap(have);
                 sMapSig = sig;
             }
             sMapShown = 1;
