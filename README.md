@@ -2,14 +2,19 @@
 
 A fan-made **native** Nintendo 3DS port of The Legend of Zelda: Majora's Mask (N64, US), forked from https://github.com/Andresac90/MM-64-3DS-Port, which ALSO is a fork of https://github.com/Andresac90/OOT-64-3DS-Port.
 
-> **Status: currently running.** I tested it on o3ds, it currently runs but has a few crashes and slowdowns. The game boots, renders, and runs, but work for bottom screen and performance still needs to be done.
+> **Status: almost done!** The game runs on o3ds (I test on an o3ds XL) fine, alot of work on the CPU has to be done because it slows down PRETTY bad in large areas (ex: Clock Town runs at 10-20fps, not too good)
 
-> **This repository contains no ROM and no game assets.** The port will be built from your own legally obtained
-> copy of the N64 game (US). No prebuilt game binaries will be distributed; see [Legal](#legal).
+## Features
+This port has a few special features, those being:
 
-This project is not affiliated with, endorsed by, or sponsored by Nintendo.
+- Widescreen
+- 45fps Old 3DS, 60FPS New 3DS
+- Gyro camera controls
+- Bottom screen
+- WIP 3D
 
 ## Legal
+This project is not affiliated with, endorsed by, or sponsored by Nintendo.
 
 - This repository contains source code, build scripts and tools only. It does **not** contain a ROM,
   extracted game assets, or any other Nintendo data. Nintendo, Nintendo 3DS, *The Legend of Zelda* and
