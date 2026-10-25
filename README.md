@@ -1,12 +1,8 @@
 # The Legend of Zelda: Majora's Mask N64 3DS Port
 
-A fan-made **native** Nintendo 3DS port of The Legend of Zelda: Majora's Mask (N64, US), built on the
-[zeldaret/mm](https://github.com/zeldaret/mm) decompilation, following the
-[Ocarina of Time N64 3DS Port](https://github.com/Andresac90/OOT-64-3DS-Port): the game's own code will run
-natively on the 3DS CPU, with a new renderer, audio backend and dual-screen interface replacing the N64 hardware.
+A fan-made **native** Nintendo 3DS port of The Legend of Zelda: Majora's Mask (N64, US), forked from https://github.com/Andresac90/MM-64-3DS-Port, which ALSO is a fork of https://github.com/Andresac90/OOT-64-3DS-Port.
 
-> **Status: just started.** Nothing runs on the 3DS yet. This repository is, for now, the decompilation the
-> port will be built on; there is nothing to build or install for the 3DS.
+> **Status: currently running.** I tested it on o3ds, it currently runs but has a few crashes and slowdowns. The game boots, renders, and runs, but work for bottom screen and performance still needs to be done.
 
 > **This repository contains no ROM and no game assets.** The port will be built from your own legally obtained
 > copy of the N64 game (US). No prebuilt game binaries will be distributed; see [Legal](#legal).
@@ -28,5 +24,4 @@ This project is not affiliated with, endorsed by, or sponsored by Nintendo.
 
 - [zeldaret/mm](https://github.com/zeldaret/mm): the Majora's Mask decompilation this port is built on. Its
   original README is kept in [docs/DECOMP_README.md](docs/DECOMP_README.md).
-- The [Ocarina of Time N64 3DS Port](https://github.com/Andresac90/OOT-64-3DS-Port), whose 3DS platform layer
-  this port will reuse, and the projects credited there.
+- The [ORIGINAL Majoras Mask N64 3DS project](https://github.com/Andresac90/MM-64-3DS-Port): This repository forks that project, but fixes bugs and gets the game actually playable.
